@@ -46,3 +46,39 @@ Use `--limit N` for a quick check and `--no-tesseract` to skip the baseline.
 - GLM-OCR zero-shot returns `.` where labels use `,`; fine-tuning is expected to fix this.
 - A previous fine-tune leaked `<think></think>` into outputs; `evaluate.py` strips it and
   reports how many raw outputs had it.
+
+## 4. Whole-sheet comparison (real pipeline, same point: right before QA/QC)
+```
+.venv-easyocr/bin/python compare_sheet.py --station 508 --file 508_198802_SF.JPG                       # baseline + GLM
+.venv-easyocr/bin/python compare_sheet.py --station 508 --file 508_198802_SF.JPG --skip-baseline --resize-h 128 --label glm_h128
+.venv-easyocr/bin/python sheet_report.py 508_198802_SF.JPG glm_h128
+```
+Runs MeteoSaver's own detection and `transcription()` twice, with `pytesseract.image_to_string`
+monkeypatched to a GLM worker (`glm_worker.py`, runs in `.venv-glm`) for the second run. `src/` is
+not modified. Outputs go to `sheet_runs/<file>/{baseline,glm*}/pre_QA_QC/`.
+Sheet 508, 123 manually transcribed temperature cells (existing pipeline output: 75.6%):
+
+| GLM input | correct |
+|---|---|
+| binarized ROIs, as fed to Tesseract (`--roi-source binarized`) | 37.4% |
+| binarized ROIs, rescaled to 128 px high (`--resize-h 128`) | 74.0% |
+| original colour ROIs (`--roi-source original`) | 83.7% |
+| original colour ROIs, rescaled to 128 px high | **91.1%** |
+
+The training crops are colour/anti-aliased (median 144 gray levels, not binary) and 128 px high, so
+the model should see the same kind of input. MeteoSaver's `transcription()` cuts ROIs from the
+binarized, line-removed table (`detected[2]`); `--roi-source original` swaps in the original clip
+(`detected[3]`, same coordinates).
+
+## 5. Row grouping fix and speed
+- `row_grouping.py` / `--row-grouping columnwise`: replaces the KMeans row grouping in
+  `organize_contours_top/_midpoint` (it merges/splits rows on sheets with uneven row pitch, e.g. 601).
+  All ten sheets, GLM, original ROIs +128: 93.9% -> **96.4%** (existing pipeline output: 89.8%).
+  Sheet 601: 68.2% -> 91.5%. Run `batch_sheets.py --row-grouping columnwise`.
+- `--fast-glm`: collect all ROIs, run GLM once in batches (`glm_batch.py`, dedupes identical ROIs,
+  pre-fills the `<think></think>` prefix), then replay. GLM stage on a sheet: ~142 s -> ~5 s with
+  identical output. `bench_glm.py`: up to 17.9x throughput, same predictions and CER.
+- `--hoist-borders`: `transcription()` re-applies borders to the whole sheet for every OCR'd cell
+  (~2M openpyxl style assignments). Running that loop once gives identical workbooks and cuts the
+  non-OCR time of a pass from ~57 s to ~20 s. Applied via a runtime-transformed copy; `src/` untouched.
+  Sheet 508 end to end: 123 s -> 48 s.
