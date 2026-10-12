@@ -1,0 +1,100 @@
+{
+  "tess_V6_digits": {
+    "cer": 0.6384143307347819,
+    "exact_match": 0.27960756832515765,
+    "empty_rate": 0.5676243868255081,
+    "sec_per_cell": 0.059749278898037744,
+    "exact_match_with_comma": 0.0
+  },
+  "tess_V6_punct": {
+    "cer": 0.6042461436390778,
+    "exact_match": 0.3608969866853539,
+    "empty_rate": 0.5581639803784163,
+    "sec_per_cell": 0.05955595244814295,
+    "exact_match_with_comma": 0.3700787401574803
+  },
+  "tess_V6_punct_pad": {
+    "cer": 0.1686846906618013,
+    "exact_match": 0.7319551506657324,
+    "empty_rate": 0.0,
+    "sec_per_cell": 0.06659957475017539,
+    "exact_match_with_comma": 0.5921259842519685
+  },
+  "tess_V9_405_digits": {
+    "cer": 0.7517001161054901,
+    "exact_match": 0.15171688857743518,
+    "empty_rate": 0.5578135949544499,
+    "sec_per_cell": 0.060297500092851994,
+    "exact_match_with_comma": 0.0
+  },
+  "tess_V9_405_punct": {
+    "cer": 0.7517001161054901,
+    "exact_match": 0.15171688857743518,
+    "empty_rate": 0.5578135949544499,
+    "sec_per_cell": 0.060359267803784165,
+    "exact_match_with_comma": 0.0
+  },
+  "tess_V9_405_punct_pad": {
+    "cer": 0.8875435395587992,
+    "exact_match": 0.03608969866853539,
+    "empty_rate": 0.0,
+    "sec_per_cell": 0.06821454607393128,
+    "exact_match_with_comma": 0.0
+  },
+  "easyocr_digits": {
+    "cer": 0.5093713717034334,
+    "exact_match": 0.346531184302733,
+    "empty_rate": 0.24386825508058865,
+    "sec_per_cell": 0.024712080571303457,
+    "exact_match_with_comma": 0.0
+  },
+  "easyocr_punct": {
+    "cer": 0.46972964007298057,
+    "exact_match": 0.37631394533987383,
+    "empty_rate": 0.24386825508058865,
+    "sec_per_cell": 0.024712080571303457,
+    "exact_match_with_comma": 0.15748031496062992
+  },
+  "meteosaver_chain": {
+    "cer": 0.5032343672250787,
+    "exact_match": 0.32796075683251574,
+    "empty_rate": 0.16362999299229153,
+    "sec_per_cell": 0.08500958066415545,
+    "exact_match_with_comma": 0.0
+  },
+  "zeroshot": {
+    "cer": 0.16553325592967325,
+    "exact_match": 0.7217939733707078,
+    "empty_rate": 0.0,
+    "sec_per_cell": 0.032395136132796265,
+    "exact_match_with_comma": 0.25826771653543307
+  },
+  "n500": {
+    "cer": 3.0179134184773595,
+    "exact_match": 0.38192011212333565,
+    "empty_rate": 0.10546601261387527,
+    "sec_per_cell": 0.04662564277365143,
+    "exact_match_with_comma": 0.4755905511811024
+  },
+  "n2000": {
+    "cer": 0.02620666777243324,
+    "exact_match": 0.9498948843728101,
+    "empty_rate": 0.0,
+    "sec_per_cell": 0.04931455229081962,
+    "exact_match_with_comma": 0.8866141732283465
+  },
+  "n8000": {
+    "cer": 0.017581688505556477,
+    "exact_match": 0.9656622284512965,
+    "empty_rate": 0.0,
+    "sec_per_cell": 0.04940056321723918,
+    "exact_match_with_comma": 0.9212598425196851
+  },
+  "full": {
+    "cer": 0.012771603914413667,
+    "exact_match": 0.9740714786264891,
+    "empty_rate": 0.0,
+    "sec_per_cell": 0.049655797318850836,
+    "exact_match_with_comma": 0.9464566929133859
+  }
+}
