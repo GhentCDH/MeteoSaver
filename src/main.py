@@ -24,6 +24,7 @@ logger = setup_logger(log_dir)
 config = configparser.ConfigParser()
 # Adjust path to config.ini (since it's placed in the root directory)
 config_file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configuration.ini')
+config_file_path = os.environ.get('METEOSAVER_CONFIG', config_file_path) # Optionally, another configuration file can be selected with this environment variable
 config.read(config_file_path)
 
 # Get run_mode and number of processors from configuration file
@@ -116,7 +117,12 @@ def process_station(station):
             transcribed_table = transcription(detected_table_and_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename,
                                               no_of_rows=int(config['TableAndCellDetection']['no_of_rows']),
                                               no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
-                                              no_of_rows_including_headers=int(config['TableAndCellDetection']['no_of_rows_including_headers']))
+                                              no_of_rows_including_headers=int(config['TableAndCellDetection']['no_of_rows_including_headers']),
+                                              row_grouping=config['Transcription'].get('row_grouping', 'kmeans'),
+                                              glm_model_dir=config['Transcription'].get('glm_model_dir'),
+                                              glm_python=config['Transcription'].get('glm_python', ''),
+                                              glm_resize_height=int(config['Transcription'].get('glm_resize_height', 128)),
+                                              glm_batch_size=int(config['Transcription'].get('glm_batch_size', 64)))
             
             end_time = datetime.now()
 

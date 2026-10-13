@@ -1184,7 +1184,7 @@ def data_formatting(input_folder_path, output_folder_path, metadata_file_path, f
     if 'Precipitation' in merged_df.columns:
         merged_df['DayOfYear'] = merged_df['Date'].dt.dayofyear
         merged_df['Year_Num'] = merged_df['Year'].astype(int)
-        cmap = plt.cm.get_cmap("Blues", merged_df['Year_Num'].nunique())
+        cmap = plt.get_cmap("Blues", merged_df['Year_Num'].nunique())
         year_to_color = dict(zip(sorted(merged_df['Year_Num'].unique()), [cmap(i) for i in range(cmap.N)]))
 
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -1247,7 +1247,7 @@ def data_formatting(input_folder_path, output_folder_path, metadata_file_path, f
                 "2010–2022": (2010, 2022)
             }
 
-            cmap = plt.cm.get_cmap('Blues', len(decades))  # Use 'Blues' and split into len(decades) shades
+            cmap = plt.get_cmap('Blues', len(decades))  # Use 'Blues' and split into len(decades) shades
             plotted_decades = {}
 
             fig, ax = plt.subplots(figsize=(14, 6))
@@ -1312,7 +1312,7 @@ def data_formatting(input_folder_path, output_folder_path, metadata_file_path, f
         fig, ax = plt.subplots(figsize=(12, 6))
 
         # Use decade-specific colormap and normalize across N decades
-        cmap = plt.cm.get_cmap(cmap_name, len(decades))
+        cmap = plt.get_cmap(cmap_name, len(decades))
         plotted_decades = {}
 
         for idx, (label, (start, end)) in enumerate(decades.items()):

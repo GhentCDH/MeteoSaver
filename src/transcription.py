@@ -23,6 +23,9 @@ from sklearn.cluster import DBSCAN
 from datetime import datetime
 from calendar import monthrange
 import zipfile
+import re
+
+from glm_ocr_client import get_glm_ocr_client
 
 
 def get_max_rows_from_filename(filename):
@@ -237,6 +240,67 @@ def organize_contours_top(contours, filename):
 
 
 
+
+
+def organize_contours_columnwise(contours, filename, max_columns=24):
+    """
+    Organizes contours into `max_rows` **column by column**, which is robust to tilted sheets and to uneven row spacing:
+    - Boxes are grouped into columns by cutting their sorted x-centres at the largest gaps.
+    - A column with exactly `max_rows` boxes is a reference: its boxes, from top to bottom, give the height of each row at that column.
+    - The boxes of every other column are assigned to the nearest row, after interpolating the reference heights to that column.
+
+    Parameters:
+    --------------
+    contours: list
+        List of bounding boxes (contours) detected in the image.
+
+    filename: str
+        Filename of the sheet, used to determine the expected number of rows.
+
+    max_columns: int
+        Expected number of columns.
+
+    Returns:
+    --------------
+    sorted_rows: list of lists
+        Bounding boxes grouped into ordered rows.
+    """
+
+    if not contours:
+        return []
+
+    max_rows = get_max_rows_from_filename(filename)
+
+    # Step 1: Group the boxes into columns using the largest gaps between their x-centres
+    bounding_boxes = [cv2.boundingRect(c) for c in contours]
+    x_centres = np.array([x + w / 2 for x, y, w, h in bounding_boxes])
+    y_centres = np.array([y + h / 2 for x, y, w, h in bounding_boxes])
+    order = np.argsort(x_centres)
+    cuts = np.sort(np.argsort(np.diff(x_centres[order]))[-(max_columns - 1):]) + 1
+    columns = [order[start:end] for start, end in zip([0, *cuts], [*cuts, len(order)])]
+
+    # Step 2: Complete columns give the y-coordinate of every row at their x-coordinate
+    references = [(x_centres[column].mean(), np.sort(y_centres[column])) for column in columns if len(column) == max_rows]
+    if not references:  # No complete column: stretch the column with the most boxes over all rows
+        fullest = max(columns, key=len)
+        ys = np.sort(y_centres[fullest])
+        references = [(x_centres[fullest].mean(), np.interp(np.linspace(0, len(ys) - 1, max_rows), np.arange(len(ys)), ys))]
+    references.sort(key=lambda reference: reference[0])
+    reference_x = np.array([reference[0] for reference in references])
+    reference_y = np.stack([reference[1] for reference in references])
+
+    # Step 3: Assign every box to the nearest row at the x-coordinate of its column
+    rows = [[] for _ in range(max_rows)]
+    for column in columns:
+        column_x = x_centres[column].mean()
+        row_heights = np.array([np.interp(column_x, reference_x, reference_y[:, r]) for r in range(max_rows)])
+        for i in column:
+            rows[int(np.argmin(np.abs(row_heights - y_centres[i])))].append(contours[i])
+
+    # Step 4: Sort each row by x-coordinate
+    sorted_rows = [sorted(row, key=lambda c: cv2.boundingRect(c)[0]) for row in rows]
+
+    return sorted_rows
 
 
 def organize_contours_fraction(contours, max_rows, fraction=0.33):
@@ -647,7 +711,44 @@ def add_missing_boxes(sorted_rows, max_cell_width_threshold=130, max_cell_height
 
 
 
-def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers):
+# EasyOCR reader, loaded into memory only once and only when it is needed
+_easyocr_reader = None
+
+def get_easyocr_reader():
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        _easyocr_reader = easyocr.Reader(['en']) # this needs to run only once to load the model into memory
+    return _easyocr_reader
+
+
+def expand_bounding_box(contour):
+    '''
+    Returns the bounding box (x, y, w, h) of a detected cell, enlarged so that the handwriting is not cut off at the cell borders.
+    '''
+    x, y, w, h = cv2.boundingRect(contour)
+
+    # Define increase factors for bounding box modification
+    increase_factor_width = 0.07  # Increase width by 7%
+    increase_factor_height = 0.20  # Increase height by 20%
+
+    # Expand width while keeping it centered
+    new_w = int(w * (1 + increase_factor_width))  # Increase width
+    x = max(0, x - (new_w - w) // 2)  # Adjust x to keep center fixed
+
+    # Expand height symmetrically
+    new_h = int(h * (1 + increase_factor_height * 2))  # Increase height
+    y = max(0, y - (new_h - h) // 2)  # Adjust y to keep center fixed
+
+    # Ensure bounding box remains within valid image bounds
+    x = max(0, x)
+    y = max(0, y)
+    w = max(1, new_w)  # Avoid zero or negative width
+    h = max(1, new_h)  # Avoid zero or negative height
+
+    return x, y, w, h
+
+
+def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model_dir=None, glm_python='', glm_resize_height=128, glm_batch_size=64):
     '''
     Performs OCR (Optical Character Recognition) on detected table cells from a pre-processed image 
     to extract and organize textual data into an Excel workbook.
@@ -667,7 +768,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
         - detected_table_cells[3]: table_original_image. Original table image before processing.
     
     ocr_model : str
-        The OCR/HTR model used for text recognition. Options include 'Tesseract-OCR', 'EasyOCR', or PaddleOCR
+        The OCR/HTR model used for text recognition. Options include 'Tesseract-OCR', 'EasyOCR', 'GLM-OCR', or PaddleOCR
     
     tesseract_path : str
         Path to the Tesseract executable, required if 'Tesseract-OCR' is the selected model.
@@ -693,6 +794,12 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     no_of_rows_including_headers : int
         Total number of rows in the table, including headers.
 
+    row_grouping : str
+        How detected cells are grouped into rows: 'kmeans' (clustering of the top and midpoint coordinates) or 'columnwise' (see organize_contours_columnwise).
+
+    glm_model_dir, glm_python, glm_resize_height, glm_batch_size
+        Settings for 'GLM-OCR' (see GlmOcrClient in glm_ocr_client.py). Only used if 'GLM-OCR' is the selected model.
+
     Returns
     --------------
     path_to_save_merged_excel_file : str
@@ -707,18 +814,18 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     # if ocr_model == 'PaddleOCR':
     #     ## Lauching PaddleOCR, which would be used by downloading necessary files as shown below
     #     paddle_ocr = PaddleOCR(use_angle_cls=True, lang = 'en', use_gpu=False) ## Run only once to download all required files
-    if ocr_model == 'EasyOCR':
-        ## Lauching EasyOCR
-        easyocr_reader = easyocr.Reader(['en']) # this needs to run only once to load the model into memory
-
-    easyocr_reader = easyocr.Reader(['en'])
+    if ocr_model == 'GLM-OCR':
+        ## Lauching GLM-OCR (the model is loaded on the first sheet and kept in memory for the next ones)
+        glm_ocr_client = get_glm_ocr_client(glm_model_dir, glm_python, glm_resize_height, glm_batch_size)
 
     # Contours of bounding boxes detected in cell recognition
     new_contours = detected_table_cells[0]
 
     image_with_all_bounding_boxes = detected_table_cells[1]
-    table_copy = detected_table_cells[2] # Binarized table image using Adaptive Thresholding
-    # table_copy = detected_table_cells[3] # Table image but as a clip of the original image (No Binarization)
+    if ocr_model == 'GLM-OCR':
+        table_copy = detected_table_cells[3] # Table image but as a clip of the original image (No Binarization). GLM-OCR was fine-tuned on colour cell images and reads these best
+    else:
+        table_copy = detected_table_cells[2] # Binarized table image using Adaptive Thresholding
 
     # Get the dimensions of the loaded image. Here, particulary the image/table width is very important for the column placement of cells/bounding boxes
     image_height, image_width, image_channels = image_with_all_bounding_boxes.shape
@@ -738,6 +845,14 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
         'Midpoint': organize_contours_midpoint,
         'Top': organize_contours_top
     }
+    if row_grouping == 'columnwise':
+        organize_methods = {
+            'Midpoint': organize_contours_columnwise,
+            'Top': organize_contours_columnwise
+        }
+
+    # Transcribed text per bounding box. Most boxes are the same in both arrangements above, so each one is only read once
+    ocr_results = {}
 
     # organize_methods = {  
     #         'Midpoint': organize_contours_by_column,
@@ -837,6 +952,22 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
             if row is not None:  # Skip None values to avoid errors
                 row.sort(key=lambda c: cv2.boundingRect(c)[1])
 
+        if ocr_model == 'GLM-OCR':
+            # Using GLM-OCR: all the cells of the sheet that were not read yet are read together in batches
+            boxes_to_read = []
+            for row in sorted_rows:
+                for contour in row or []:
+                    if contour is None:
+                        continue
+                    box = expand_bounding_box(contour)
+                    x, y, w, h = box
+                    if box not in ocr_results and box not in boxes_to_read and table_copy[y:y+h, x:x+w].size != 0:
+                        boxes_to_read.append(box)
+            glm_texts = glm_ocr_client.read([table_copy[y:y+h, x:x+w] for x, y, w, h in boxes_to_read])
+            for box, glm_text in zip(boxes_to_read, glm_texts):
+                # Keep the digits only, as for the other OCR/HTR models: the decimal point is restored in the QA/QC module
+                ocr_results[box] = re.sub(r'[^0-9]', '', glm_text)
+
         # Dictionary to track assigned columns per row
         assigned_columns_per_row = {}
         for row_index, row in enumerate(sorted_rows, start=1):
@@ -845,25 +976,10 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
             
             for contour in row:
 
-                x, y, w, h = cv2.boundingRect(contour)
+                if contour is None:
+                    continue  # Padding row (months with fewer than 31 days): there is no cell to read
 
-                # Define increase factors for bounding box modification
-                increase_factor_width = 0.07  # Increase width by 7%
-                increase_factor_height = 0.20  # Increase height by 20%
-
-                # Expand width while keeping it centered
-                new_w = int(w * (1 + increase_factor_width))  # Increase width
-                x = max(0, x - (new_w - w) // 2)  # Adjust x to keep center fixed
-
-                # Expand height symmetrically
-                new_h = int(h * (1 + increase_factor_height * 2))  # Increase height
-                y = max(0, y - (new_h - h) // 2)  # Adjust y to keep center fixed
-
-                # Ensure bounding box remains within valid image bounds
-                x = max(0, x)
-                y = max(0, y)
-                w = max(1, new_w)  # Avoid zero or negative width
-                h = max(1, new_h)  # Avoid zero or negative height
+                x, y, w, h = expand_bounding_box(contour)
 
                  # Draw bounding box on the visualization image
                 cv2.rectangle(ROIs_image, (x, y), (x + w, y + h), (0, 0, 255), 3)
@@ -888,62 +1004,66 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                 
                 if ROI.size != 0:  # Check if the height and width are greater than zero. This is to prevent invalid ROIs
                     
-                    # Save the detected text image/ROI
-                    save_dir =  os.path.join(transient_transcription_output_dir, station)
-                    os.makedirs(save_dir, exist_ok=True)  # Ensure the directory exists
-                    save_path_detected_text = os.path.join(save_dir, 'detected.png')
-                    cv2.imwrite(save_path_detected_text, ROI)
-                    if ocr_model == 'Tesseract-OCR':
-                    # Using Tesseract-OCR
-                        ocr_result = pytesseract.image_to_string(save_path_detected_text, lang='cobecore-V9_405', config='--oem 1 --psm 7 -c tessedit_char_whitelist=0123456789') # Just added -c tessedit_char_whitelist=0123456789 to really limit the text type/values detected
+                    if (x, y, w, h) in ocr_results:
+                        # This cell was already read, in the other arrangement of the bounding boxes or with GLM-OCR above
+                        ocr_result = ocr_results[(x, y, w, h)]
+                    else:
+                        ocr_result = None
+                        # Save the detected text image/ROI
+                        save_dir =  os.path.join(transient_transcription_output_dir, station)
+                        os.makedirs(save_dir, exist_ok=True)  # Ensure the directory exists
+                        save_path_detected_text = os.path.join(save_dir, 'detected.png')
+                        cv2.imwrite(save_path_detected_text, ROI)
+                        if ocr_model == 'Tesseract-OCR':
+                        # Using Tesseract-OCR
+                            ocr_result = pytesseract.image_to_string(save_path_detected_text, lang='cobecore-V9_405', config='--oem 1 --psm 7 -c tessedit_char_whitelist=0123456789') # Just added -c tessedit_char_whitelist=0123456789 to really limit the text type/values detected
 
-                        # Here's a brief explanation of some Page Segmentation Modes (PSMs) available in Tesseract:
-                        # 0: Orientation and script detection (OSD) only.
-                        # 1: Automatic page segmentation with OSD.
-                        # 2: Automatic page segmentation, but no OSD, or OCR.
-                        # 3: Fully automatic page segmentation, but no OSD. (Default)
-                        # 4: Assume a single column of text of variable sizes.
-                        # 5: Assume a single uniform block of vertically aligned text.
-                        # 6: Assume a single uniform block of text.
-                        # 7: Treat the image as a single text line.
-                        # 8: Treat the image as a single word.
-                        # 9: Treat the image as a single word in a circle.
-                        # 10: Treat the image as a single character.
-                        # 11: Sparse text. Find as much text as possible in no particular order.
-                        # 12: Sparse text with OSD.
-                        # 13: Raw line. Treat the image as a single text line, bypassing hacks that are Tesseract-specific.
+                            # Here's a brief explanation of some Page Segmentation Modes (PSMs) available in Tesseract:
+                            # 0: Orientation and script detection (OSD) only.
+                            # 1: Automatic page segmentation with OSD.
+                            # 2: Automatic page segmentation, but no OSD, or OCR.
+                            # 3: Fully automatic page segmentation, but no OSD. (Default)
+                            # 4: Assume a single column of text of variable sizes.
+                            # 5: Assume a single uniform block of vertically aligned text.
+                            # 6: Assume a single uniform block of text.
+                            # 7: Treat the image as a single text line.
+                            # 8: Treat the image as a single word.
+                            # 9: Treat the image as a single word in a circle.
+                            # 10: Treat the image as a single character.
+                            # 11: Sparse text. Find as much text as possible in no particular order.
+                            # 12: Sparse text with OSD.
+                            # 13: Raw line. Treat the image as a single text line, bypassing hacks that are Tesseract-specific.
 
-                    # Uncomment the following lines if you'd like to make use of PaddleOCR
-                    # if ocr_model == 'PaddleOCR':
-                    #     ## Using PaddleOCR
-                    #     ocr_result = paddle_ocr.ocr('detected.png', cls = True)
+                        # Uncomment the following lines if you'd like to make use of PaddleOCR
+                        # if ocr_model == 'PaddleOCR':
+                        #     ## Using PaddleOCR
+                        #     ocr_result = paddle_ocr.ocr('detected.png', cls = True)
 
-                    if ocr_model == 'EasyOCR':
-                    # Using EasyOCR
-                        ocr_result = easyocr_reader.readtext(save_path_detected_text, detail = 0, allowlist='0123456789')
-                        # In EasyOCR, the detail parameter specifies the level of detail in the output. 
-                                # When using the readtext method, the detail parameter can be set to different values to control what kind of output you get. 
-                                # Specifically:
-                                # detail=1: The output will be a list of tuples, where each tuple contains detailed information about the detected text, 
-                                # including the bounding box coordinates, the text string, and the confidence score. Example: [(bbox, text, confidence), ...].
+                        if ocr_model == 'EasyOCR':
+                        # Using EasyOCR
+                            ocr_result = get_easyocr_reader().readtext(save_path_detected_text, detail = 0, allowlist='0123456789')
+                            # In EasyOCR, the detail parameter specifies the level of detail in the output. 
+                                    # When using the readtext method, the detail parameter can be set to different values to control what kind of output you get. 
+                                    # Specifically:
+                                    # detail=1: The output will be a list of tuples, where each tuple contains detailed information about the detected text, 
+                                    # including the bounding box coordinates, the text string, and the confidence score. Example: [(bbox, text, confidence), ...].
 
-                                # detail=0: The output will be a list of strings, where each string is the detected text without any additional details. 
-                                # This is a simpler output format that only provides the recognized text. Example: ["text1", "text2", ...].
-                        if isinstance(ocr_result, list): # This is because EasyOCR's results are returned as a list
-                                ocr_result = ''.join(ocr_result)  # Convert list to a string
-                    
-                    
-                    # Using OCR for handwritten text recognition
-                    if ocr_result is not None:
-                        
-                        if not ocr_result.strip(): # Check if the result is empty or only whitespace. This could be due to the selected OCR (in this case: Tesseract-OCR) not being able to recognize the text in the ROI.
+                                    # detail=0: The output will be a list of strings, where each string is the detected text without any additional details. 
+                                    # This is a simpler output format that only provides the recognized text. Example: ["text1", "text2", ...].
+                            if isinstance(ocr_result, list): # This is because EasyOCR's results are returned as a list
+                                    ocr_result = ''.join(ocr_result)  # Convert list to a string
+
+                        if ocr_result is not None and not ocr_result.strip(): # Check if the result is empty or only whitespace. This could be due to the selected OCR (in this case: Tesseract-OCR) not being able to recognize the text in the ROI.
                             # For this reason, we can try another OCR, say for example Easy OCR, to try to recognize the text in this ROI
-                            ocr_result = easyocr_reader.readtext(save_path_detected_text, detail = 0, allowlist='0123456789')
+                            ocr_result = get_easyocr_reader().readtext(save_path_detected_text, detail = 0, allowlist='0123456789')
                             if isinstance(ocr_result, list): # This is because EasyOCR's results are returned as a list
                                 ocr_result = ''.join(ocr_result)  # Convert list to a string
 
+                        ocr_results[(x, y, w, h)] = ocr_result
 
-                                               
+                    # Using OCR for handwritten text recognition
+                    if ocr_result is not None:
+
                         # Attain the Ms Excel Template cell coordinates
                         # # Determine the cell reference using the x coodrinate of the bounding box, row index, maximum column number, and image/table width
                         cell_ref = calculate_cell_reference(x, w, row_index, assigned_columns_per_row, max_columns=24, table_width=image_width) # e.g., A1, B5, etc.
@@ -951,19 +1071,6 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                         # Place the OCR/HTR recognized text in its respective Ms Excel cell 
                         ws[cell_ref].value = ocr_result.strip()  # Remove leading/trailing whitespace   
 
-                        # Set up border styles for excel output
-                        thin_border = Border(
-                            left=Side(style='thin'),
-                            right=Side(style='thin'),
-                            top=Side(style='thin'),
-                            bottom=Side(style='thin'))
-
-                        # Loop through cells to apply borders
-                        for row in ws.iter_rows(min_row=1, max_row=no_of_rows, min_col=1, max_col=no_of_columns):
-                            for cell in row:
-                                cell.border = thin_border
-
-                        
                         ## CONTINOUS LEARNING (MACHINE-LEARNING) OF THE OCR. # Save clipped cells as images for a training dataset
                         
                         # Adjust cell_ref to match final Excel layout: 2 columns inserted + 3 header rows added
@@ -993,6 +1100,18 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                 else:
                     print('ROI is empty or invalid')
 
+
+        # Set up border styles for excel output
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin'))
+
+        # Loop through cells to apply borders
+        for row in ws.iter_rows(min_row=1, max_row=no_of_rows, min_col=1, max_col=no_of_columns):
+            for cell in row:
+                cell.border = thin_border
 
         ### SPECIAL ADDITION TO CODE / CUSTOMIZATION: The lines below are particular to our tables. Here we replace the headers and row labels as in the original table format. This will vary from your setup and this should be customized to your particular sheets.
         # Insert two columns on the left side of the excel sheet

@@ -66,9 +66,9 @@ Below is the structure for this project.
 |
 ├── configuration.ini                                       <- Module 1: Configuration. User-defined settings to ensure smooth running of MeteoSaver
 |
-├── environment.yml                                         <- The requirements file for reproducing the analysis environment. Generated with `conda env export > environment.yml`
+├── pyproject.toml                                          <- The requirements for reproducing the analysis environment with uv
 |
-├── requirements.in                                         <- The requirements file for reproducing the analysis environment. Generated with 'pip install'                    
+├── uv.lock                                                 <- The exact versions of all packages in the analysis environment. Generated with `uv lock`
 |
 ├── job_script.sh                                           <- Job script for HPC infrastructure users to run the software
 |
@@ -78,49 +78,34 @@ Below is the structure for this project.
 
 ## Setup
 
-Three ways of creating reproducible environments are provided, the general Conda environment, using a virtual environment, and an isolated Docker environment based on a Conda base image.
+The Python environment is managed with [uv](https://docs.astral.sh/uv/) ([see here for uv install instructions](https://docs.astral.sh/uv/getting-started/installation/)). An isolated Docker environment is provided as well.
 
-### Conda
+### uv
 
-To create an environment which is consistent use the environment file after installing Miniconda.
-
-```bash
-conda env create -f environment.yml
-```
-
-Activate the working environment using:
+To create an environment which is consistent, run the following in the main project directory. This installs Python 3.12 and all packages, in the exact versions listed in `uv.lock`, into the `.venv` folder.
 
 ```bash
-conda activate transcribing_drc_data_environment
+uv sync
 ```
 
-### Virtual environment
+Run the software in this environment using:
 
-If you prefer not to use Conda, you can set up a virtual environment using venv and install dependencies from [requirements.in](https://github.com/VUB-HYDR/MeteoSaver/blob/043bfe8be00c4752c4f52a4f844381c693e8edec/requirements.in).
+```bash
+uv run python src/main.py
+```
 
-Create and activate a virtual environment
-```bash
-python -m venv meteosaver_env
-```
-Activate the environment:
-- For Windows:
-```bash
-meteosaver_env\Scripts\activate
-```
-- Linux / macOS
-```bash
-source meteosaver_env/bin/activate
-```
-Then install dependencies
-```bash
-pip install --upgrade pip
-pip install -r requirements.in
-```
+To add or update a package, use `uv add <package>` or `uv lock --upgrade-package <package>`. This updates both `pyproject.toml` and `uv.lock`.
+
+> [!NOTE]
+> Tesseract-OCR itself is not a Python package and has to be installed separately if you select it as OCR/HTR model (see the [configuration module](configuration.ini)).
+> GLM-OCR is installed with the environment (torch and transformers). A GPU is strongly recommended for it; on Linux, uv installs the CUDA version of torch.
 
 ### Docker
 
 > [!WARNING]
 > A Docker-based setup is recommended for users who want a more isolated and reproducible execution environment. Local Conda or virtual-environment installations are also supported, but containerization may reduce dependency and system-configuration issues across platforms.
+
+The Docker setup has not been moved to uv yet: it builds from the former `environment.yml` and does not include GLM-OCR.
 
 The dockerfile included provides a Conda environment ([see here for docker install instructions](https://docs.docker.com/engine/install/)).
 You can build this docker image using the below command. This will download all required
@@ -146,7 +131,7 @@ The figure below represents the modules in MeteoSaver v1.0
 
 
 ## How to run MeteoSaver v1.0 
-After setting up the python environment using the [requirements.in](https://github.com/VUB-HYDR/MeteoSaver/blob/043bfe8be00c4752c4f52a4f844381c693e8edec/requirements.in), the [environment.yml](https://github.com/VUB-HYDR/MeteoSaver/blob/b8138fa5a23f4ce40603cae8defd82d10734fdbd/environment.yml) or Docker setup available on this repository, input the following settings in the [configuration module](https://github.com/VUB-HYDR/MeteoSaver/blob/b8138fa5a23f4ce40603cae8defd82d10734fdbd/configuration.ini) specific to your case study (sheets) before running (see table below):
+After setting up the python environment using uv (see [Setup](#setup)) or Docker setup available on this repository, input the following settings in the [configuration module](https://github.com/VUB-HYDR/MeteoSaver/blob/b8138fa5a23f4ce40603cae8defd82d10734fdbd/configuration.ini) specific to your case study (sheets) before running (see table below):
 1. General: Here, you specify the environment in which the scripts will run, i.e. ```local``` (Sequential processing on a personal computer) or ```hpc``` (Parallel processing using multiple processors, suitable for High Performance Computing (HPC) environments). This is set to ```local``` by default
 2. Directories. Here, you specify the directories for the following: (i) all historical weather data sheet images in folders per station, (ii) pre-QA/QC transcribed data, (iii) post-QA/QC transcribed data, (iv) the final refined daily hydroclimate data (after all quality checks), (v) transient transcription output during processing, (vi) manually transcribed data (used for validation), (vii) alidation results comparing manually transcribed and the MeteoSaver transcribed data, and (viii) all the stations metadata.
 3. Table and Cell Detection: User specifications for table and cell detection.

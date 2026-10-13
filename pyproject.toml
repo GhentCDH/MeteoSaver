@@ -1,0 +1,27 @@
+[project]
+name = "meteosaver"
+version = "1.0.0"
+description = "Machine-learning based software for the transcription of historical weather data"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "cartopy>=0.22",
+    "easyocr>=1.7.2",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.6",
+    "openpyxl>=3.1.2",
+    # pandas 3 no longer accepts the 'M' frequency used in the data formatting module
+    "pandas>=2.2,<3",
+    "pillow>=10",
+    "pytesseract>=0.3.13",
+    "scikit-learn>=1.4",
+    "scipy>=1.11",
+    # GLM-OCR
+    "torch>=2.10",
+    "transformers>=5.3",
+]
+
+[tool.uv]
+# The scripts in src/ are run directly; there is no package to build or install
+package = false
