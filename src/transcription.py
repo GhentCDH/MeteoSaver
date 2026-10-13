@@ -711,6 +711,53 @@ def add_missing_boxes(sorted_rows, max_cell_width_threshold=130, max_cell_height
 
 
 
+def save_glm_output(transcribed_table, glm_output_dir_station, month_filename, boxes_per_cell, ocr_results, glm_texts_per_box):
+    '''
+    Saves the text exactly as read by GLM-OCR (so with the decimal comma, before only the digits are kept) to an Excel workbook with two sheets:
+    - 'GLM_OCR_text': the table as in the pre-QA/QC workbook, with the text as read by GLM-OCR in each cell.
+    - 'Detected_cells': one row per detected cell, with its place in the table, its bounding box in the clipped table image (in pixels) and the text.
+
+    Parameters
+    --------------
+    transcribed_table : str
+        Path to the pre-QA/QC workbook of this sheet, whose layout and headers are used.
+    glm_output_dir_station : str
+        Directory where the workbook is saved.
+    month_filename : str
+        Filename of the processed image.
+    boxes_per_cell : dict
+        The bounding box (x, y, w, h) placed in each cell of the Excel sheet, for both arrangements of the bounding boxes ('Top' and 'Midpoint').
+    ocr_results : dict
+        The transcribed text (digits only) per bounding box.
+    glm_texts_per_box : dict
+        The text as read by GLM-OCR per bounding box.
+
+    Returns
+    --------------
+    glm_output_path : str
+        Path to the saved workbook.
+    '''
+    wb = openpyxl.load_workbook(transcribed_table)
+    ws = wb.active
+    ws.title = 'GLM_OCR_text'
+    cells_sheet = wb.create_sheet('Detected_cells')
+    cells_sheet.append(['Cell', 'Row', 'Column', 'x', 'y', 'w', 'h', 'GLM-OCR text', 'Transcribed (digits only)'])
+
+    # As in merge_excel_files: the cell of the 'Top' arrangement is used, unless it is empty
+    for cell_ref in sorted(set(boxes_per_cell['Top']) | set(boxes_per_cell['Midpoint']), key=lambda ref: (ws[ref].row, ws[ref].column)):
+        box = boxes_per_cell['Top'].get(cell_ref)
+        if box is None or not ocr_results.get(box):
+            box = boxes_per_cell['Midpoint'].get(cell_ref, box)
+        glm_text = glm_texts_per_box.get(box, '')
+        ws[cell_ref].value = glm_text
+        cells_sheet.append([cell_ref, ws[cell_ref].row, ws[cell_ref].column, *box, glm_text, ocr_results.get(box, '')])
+
+    os.makedirs(glm_output_dir_station, exist_ok=True)
+    glm_output_path = os.path.join(glm_output_dir_station, f'{month_filename}_GLM_OCR_output.xlsx')
+    wb.save(glm_output_path)
+    return glm_output_path
+
+
 # EasyOCR reader, loaded into memory only once and only when it is needed
 _easyocr_reader = None
 
@@ -748,7 +795,7 @@ def expand_bounding_box(contour):
     return x, y, w, h
 
 
-def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model_dir=None, glm_python='', glm_resize_height=128, glm_batch_size=64):
+def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model_dir=None, glm_python='', glm_resize_height=128, glm_batch_size=64, glm_output_dir_station=None):
     '''
     Performs OCR (Optical Character Recognition) on detected table cells from a pre-processed image 
     to extract and organize textual data into an Excel workbook.
@@ -799,6 +846,9 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
 
     glm_model_dir, glm_python, glm_resize_height, glm_batch_size
         Settings for 'GLM-OCR' (see GlmOcrClient in glm_ocr_client.py). Only used if 'GLM-OCR' is the selected model.
+
+    glm_output_dir_station : str
+        Directory for saving the text exactly as read by GLM-OCR (see save_glm_output). Only used if 'GLM-OCR' is the selected model.
 
     Returns
     --------------
@@ -853,6 +903,8 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
 
     # Transcribed text per bounding box. Most boxes are the same in both arrangements above, so each one is only read once
     ocr_results = {}
+    glm_texts_per_box = {}  # The text exactly as read by GLM-OCR, per bounding box
+    boxes_per_cell = {method_name: {} for method_name in organize_methods}  # The bounding box placed in each cell of the Excel sheet, per arrangement
 
     # organize_methods = {  
     #         'Midpoint': organize_contours_by_column,
@@ -964,6 +1016,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                     if box not in ocr_results and box not in boxes_to_read and table_copy[y:y+h, x:x+w].size != 0:
                         boxes_to_read.append(box)
             glm_texts = glm_ocr_client.read([table_copy[y:y+h, x:x+w] for x, y, w, h in boxes_to_read])
+            glm_texts_per_box.update(zip(boxes_to_read, glm_texts))
             for box, glm_text in zip(boxes_to_read, glm_texts):
                 # Keep the digits only, as for the other OCR/HTR models: the decimal point is restored in the QA/QC module
                 ocr_results[box] = re.sub(r'[^0-9]', '', glm_text)
@@ -1082,6 +1135,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
 
                         # Construct adjusted Excel-style reference
                         adjusted_cell_ref = f"{adjusted_column_letter}{adjusted_row_index}"
+                        boxes_per_cell[method_name][adjusted_cell_ref] = (x, y, w, h)
                         
                         if method_name == 'Top': # Since top cordinates of the bounding boxes are the most prefered organizing method here
                             # Save the clipped images inside the loop:
@@ -1185,5 +1239,9 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     merge_excel_files(top_excel_path, midpoint_excel_path, path_to_save_merged_excel_file, 1, no_of_rows_including_headers) # this prioritizes the top coordinates of the bounding box to the mid point coordinates when placing the transcribed data into an excel sheet. But considers the best placement for both as double check. Here the 1 represent the first row and the 46 represents the last possible row to perform the merging of the excel files. In our case we have 43 rows with data + 3 header rows = 46.
     # merge_excel_files(midpoint_excel_path, top_excel_path, path_to_save_merged_excel_file, 1, no_of_rows_including_headers) # this prioritizes the midpoint coordinates of the bounding box to the top coordinates when placing the transcribed data into an excel sheet. But considers the best placement for both as double check. Here the 1 represent the first row and the 46 represents the last possible row to perform the merging of the excel files. In our case we have 43 rows with data + 3 header rows = 46.
 
+
+    if ocr_model == 'GLM-OCR' and glm_output_dir_station:
+        glm_output_path = save_glm_output(path_to_save_merged_excel_file, glm_output_dir_station, month_filename, boxes_per_cell, ocr_results, glm_texts_per_box)
+        print(f'GLM-OCR output saved to {glm_output_path}')
 
     return path_to_save_merged_excel_file

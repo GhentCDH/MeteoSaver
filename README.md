@@ -41,6 +41,12 @@ Below is the structure for this project.
 |   |                                                          detection model, (iv) transcription, (v) quality assessment and control,
 |   |                                                          and (vi) data formatting and upload
 │   │
+│   ├── tui.py                                              <- Dashboard to set the main configuration settings and run the modules from the terminal
+│   │
+│   ├── meteosaver_app                                      <- Scripts of the dashboard (layout, colours, logo, reading/writing of the configuration file)
+│   │
+│   ├── image_discovery.py                                  <- Script to search the image directory, and all the folders within it, for the images of the data sheets
+│   │
 │   ├── image_preprocessing_module.py                       <- Script to carry out image preprocessing of the original scans
 |   |                                                          of climate data records
 │   │
@@ -140,6 +146,17 @@ After setting up the python environment using uv (see [Setup](#setup)) or Docker
 6. Data Formatting: Here, you specify the location of the date information in the tables, used for formatting the transcribed data to time series in .xlsx and .tsv (Station Exchange Format).
 
 After inputting the configuration settings specific to your case study (see Table below), you can then run the [main.py](https://github.com/VUB-HYDR/MeteoSaver/blob/7aeab0f526b44056c062407df7cfe467e20a67d8/src/main.py) script if using ```local```, or [job_script](https://github.com/VUB-HYDR/MeteoSaver/blob/aefb8d8068762c5a7715be24dfee835363673ae7/job_script.sh) in case of ```hpc``` architecture, which runs all the modules 1-6 of MeteoSaver i.e. in order (i) configuration, (iI) image-preprocessing module, (iii) table and cell detection model, (iv) transcription, (v) quality assessment and control, and (vi) data formatting and upload, and return results in the specified directories. 
+
+### Dashboard
+Instead of editing the configuration file by hand and running [main.py](src/main.py), you can use the dashboard in the terminal:
+
+```bash
+uv run python src/tui.py
+```
+
+The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, QA/QC, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
+
+The selection of modules is also available without the dashboard, e.g. `uv run python src/main.py --stages qaqc formatting validation`.
 
 ### Minimal Working Example (MWE)
 You can run the entire script in this repository as a Minimal Working Example (MWE) without modifying any configuration settings. Simply set up the Python environment on your personal computer, i.e. ```local```, and execute the script using [main.py](https://github.com/VUB-HYDR/MeteoSaver/blob/7aeab0f526b44056c062407df7cfe467e20a67d8/src/main.py) or run the MWE provided on this repository ([here](https://github.com/VUB-HYDR/MeteoSaver/tree/81c420360c39258ea67087764dee15d8ceb634cb/manual_and_minimal_working_example)) in Jupyter Notebooks.

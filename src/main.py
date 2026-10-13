@@ -1,6 +1,8 @@
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+import argparse
 import configparser
+import traceback
 import multiprocessing as mp
 from datetime import datetime
 import glob
@@ -13,6 +15,7 @@ from transcription import *
 from quality_assessment_and_quality_control import *
 from data_formatting_and_upload import *
 from validation import *
+from image_discovery import find_sheets
 
 # Logger Setup to inform users of progress through the multiple modules/stages
 from logger_setup import setup_logger
@@ -43,13 +46,31 @@ metadata_file_path = config['Directories']['metadata_file_path'] # Directory for
 formatted_already_digitized_data_dir = config['Directories']['formatted_already_digitized_data_dir'] # Directory for previously transcribed data to add to our new transcribed database
 region_shapefile_path = config['Directories']['region_shapefile_path'] # Directory for shapefile of the study region
 result_maps_dir = config['Directories']['result_maps_dir'] # Directory for results overlain on maps
+glm_output_dir = config['Directories'].get('glm_output_dir', os.path.join(os.path.dirname(os.path.normpath(pre_QA_QC_transcribed_hydroclimate_data_dir)), '08_GLM_OCR_output')) # Directory for the text as read by GLM-OCR, per sheet
 
-# Get all folder names (Station Numbers) within full_datadir
-all_stations = [folder for folder in os.listdir(full_datadir) if os.path.isdir(os.path.join(full_datadir, folder))]
+# Search full_datadir, and all the folders within it, for the images of the data sheets
+sheets_by_station, search_messages = find_sheets(full_datadir)
+all_stations = list(sheets_by_station)
+
+# Modules to run. By default all of them; a selection can be given on the command line, e.g. --stages qaqc formatting validation
+# (the modules that are left out then use the files that are already in the results directories)
+ALL_STAGES = ['transcription', 'qaqc', 'formatting', 'validation']
+argument_parser = argparse.ArgumentParser()
+argument_parser.add_argument('--stages', nargs='+', choices=ALL_STAGES, default=ALL_STAGES)
+stages_to_run = argument_parser.parse_known_args()[0].stages
+
+def report_error(message):
+    # Reports an error with its traceback, marked for the dashboard, without stopping the other sheets and stations
+    print(f"[ ERROR ] {message}", flush=True)
+    for line in traceback.format_exc().rstrip().splitlines():
+        print(f"[ ERROR ] | {line}", flush=True)
+
+def announce_stage(stage, event):
+    # Marks the start and the end of a module in the output, for the dashboard (src/tui.py) to follow the progress
+    print(f"[stage:{stage}] {event}", flush=True)
 
 # Function to process each station's data
 def process_station(station):
-    datadir = os.path.join(full_datadir, station)
     pre_QA_QC_transcribed_hydroclimate_data_dir_station = os.path.join(pre_QA_QC_transcribed_hydroclimate_data_dir, station)
     post_QA_QC_transcribed_hydroclimate_data_dir_station = os.path.join(post_QA_QC_transcribed_hydroclimate_data_dir, station)
     
@@ -57,19 +78,15 @@ def process_station(station):
     os.makedirs(pre_QA_QC_transcribed_hydroclimate_data_dir_station, exist_ok=True)
     os.makedirs(post_QA_QC_transcribed_hydroclimate_data_dir_station, exist_ok=True)
     
-    # Collect all valid 'SF' (standard format) image files for this station
-    sf_files = [file for file in glob.glob(os.path.join(datadir, f"{station}_*")) if 'SF' in os.path.basename(file)]
+    # All the images of standard format sheets that were found for this station
+    sf_files = sheets_by_station[station]
 
-    if not sf_files:
-        print(f"[INFO] No standard format (SF) files found for station {station}. Skipping.")
-        return
-
-    for month_data in sf_files:
+    for sheet_number, month_data in enumerate(sf_files, start=1):
         month_filename = os.path.basename(month_data)
+        print(f"[progress] station={station} ({all_stations.index(station) + 1}/{len(all_stations)}) sheet={sheet_number}/{len(sf_files)} file={month_filename}", flush=True)
 
-        # Safety check: file really matches station
-        if not month_filename.startswith(f"{station}_"):
-            print(f"[WARNING] Filename mismatch: {month_filename} does not match station {station}. Skipping.")
+        if not os.path.exists(month_data):
+            print(f"[ ERROR ] Image not found: {month_data}", flush=True)
             continue
 
         # CHECKPOINTING: Skip already-processed months. Incase of an HPC job or local pc run stopping before completion. **Uncomment the lines below incase of large volumes of data and limited RUNTIME on resources.
@@ -80,117 +97,145 @@ def process_station(station):
 
         # Perform Pre-processing, Transcription, QA/QC, and Post-processing
         try:
-            # Module 2: Image pre-processing
             logger.info(f"Processing station {station}, file: {month_filename}")
-            logger.info("Step 1: Preprocessing image")
-            image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
+            if 'transcription' in stages_to_run:
+                announce_stage('transcription', 'start')
+                # Module 2: Image pre-processing
+                logger.info("Step 1: Preprocessing image")
+                image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
 
-            # Module 3: Table and cell detection 
-            logger.info("Step 2: Detecting table and cells")
-            detected_table_and_cells = table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
-                                                   clip_up = int(config['TableAndCellDetection']['clip_up']), 
-                                                   clip_down = int(config['TableAndCellDetection']['clip_down']),
-                                                   clip_left = int(config['TableAndCellDetection']['clip_left']),
-                                                   clip_right = int(config['TableAndCellDetection']['clip_right']),
-                                                   max_table_width = int(config['TableAndCellDetection']['max_table_width']),
-                                                   max_table_height = int(config['TableAndCellDetection']['max_table_height']),
-                                                   min_cell_width_threshold=int(config['TableAndCellDetection']['min_cell_width_threshold']),
-                                                   max_cell_width_threshold=int(config['TableAndCellDetection']['max_cell_width_threshold']),
-                                                   min_cell_height_threshold=int(config['TableAndCellDetection']['min_cell_height_threshold']),
-                                                   max_cell_height_threshold=int(config['TableAndCellDetection']['max_cell_height_threshold']),
-                                                   space_height_threshold=int(config['TableAndCellDetection']['space_height_threshold']), 
-                                                   space_width_threshold=int(config['TableAndCellDetection']['space_width_threshold']), 
-                                                   max_cell_height_per_box=int(config['TableAndCellDetection']['max_cell_height_per_box']), 
-                                                   no_of_rows=int(config['TableAndCellDetection']['no_of_rows']), 
-                                                   no_of_columns=int(config['TableAndCellDetection']['no_of_columns']))
+                # Module 3: Table and cell detection 
+                logger.info("Step 2: Detecting table and cells")
+                detected_table_and_cells = table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
+                                                       clip_up = int(config['TableAndCellDetection']['clip_up']), 
+                                                       clip_down = int(config['TableAndCellDetection']['clip_down']),
+                                                       clip_left = int(config['TableAndCellDetection']['clip_left']),
+                                                       clip_right = int(config['TableAndCellDetection']['clip_right']),
+                                                       max_table_width = int(config['TableAndCellDetection']['max_table_width']),
+                                                       max_table_height = int(config['TableAndCellDetection']['max_table_height']),
+                                                       min_cell_width_threshold=int(config['TableAndCellDetection']['min_cell_width_threshold']),
+                                                       max_cell_width_threshold=int(config['TableAndCellDetection']['max_cell_width_threshold']),
+                                                       min_cell_height_threshold=int(config['TableAndCellDetection']['min_cell_height_threshold']),
+                                                       max_cell_height_threshold=int(config['TableAndCellDetection']['max_cell_height_threshold']),
+                                                       space_height_threshold=int(config['TableAndCellDetection']['space_height_threshold']), 
+                                                       space_width_threshold=int(config['TableAndCellDetection']['space_width_threshold']), 
+                                                       max_cell_height_per_box=int(config['TableAndCellDetection']['max_cell_height_per_box']), 
+                                                       no_of_rows=int(config['TableAndCellDetection']['no_of_rows']), 
+                                                       no_of_columns=int(config['TableAndCellDetection']['no_of_columns']))
             
-            # Module 4: Transcription
-            logger.info("Step 3: Transcribing values using OCR/HTR")
-            start_time = datetime.now()
-            ocr_model = config['Transcription']['ocr_model'] # Selected OCR/HTR model
-            # Incase of Tesseract
-            # Ensure that the tesseract path is set correctly for your local system
-            tesseract_path = config['Transcription']['tesseract_path']
-            # Set TESSDATA_PREFIX to the system's tessdata directory (for system-wide language files)
-            system_tessdata_dir = config['Transcription']['system_tessdata_dir']
-            os.environ["TESSDATA_PREFIX"] = system_tessdata_dir
-            transcribed_table = transcription(detected_table_and_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename,
-                                              no_of_rows=int(config['TableAndCellDetection']['no_of_rows']),
-                                              no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
-                                              no_of_rows_including_headers=int(config['TableAndCellDetection']['no_of_rows_including_headers']),
-                                              row_grouping=config['Transcription'].get('row_grouping', 'kmeans'),
-                                              glm_model_dir=config['Transcription'].get('glm_model_dir'),
-                                              glm_python=config['Transcription'].get('glm_python', ''),
-                                              glm_resize_height=int(config['Transcription'].get('glm_resize_height', 128)),
-                                              glm_batch_size=int(config['Transcription'].get('glm_batch_size', 64)))
+                # Module 4: Transcription
+                logger.info("Step 3: Transcribing values using OCR/HTR")
+                start_time = datetime.now()
+                ocr_model = config['Transcription']['ocr_model'] # Selected OCR/HTR model
+                # Incase of Tesseract
+                # Ensure that the tesseract path is set correctly for your local system
+                tesseract_path = config['Transcription']['tesseract_path']
+                # Set TESSDATA_PREFIX to the system's tessdata directory (for system-wide language files)
+                system_tessdata_dir = config['Transcription']['system_tessdata_dir']
+                os.environ["TESSDATA_PREFIX"] = system_tessdata_dir
+                transcribed_table = transcription(detected_table_and_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename,
+                                                  no_of_rows=int(config['TableAndCellDetection']['no_of_rows']),
+                                                  no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
+                                                  no_of_rows_including_headers=int(config['TableAndCellDetection']['no_of_rows_including_headers']),
+                                                  row_grouping=config['Transcription'].get('row_grouping', 'kmeans'),
+                                                  glm_model_dir=config['Transcription'].get('glm_model_dir'),
+                                                  glm_python=config['Transcription'].get('glm_python', ''),
+                                                  glm_resize_height=int(config['Transcription'].get('glm_resize_height', 128)),
+                                                  glm_batch_size=int(config['Transcription'].get('glm_batch_size', 64)),
+                                                  glm_output_dir_station=os.path.join(glm_output_dir, station))
             
-            end_time = datetime.now()
+                end_time = datetime.now()
 
-            print(f'Duration of transcribing: {end_time - start_time}')
-            
-            # Module 5: Quality assessment and Quality Control
-            logger.info("Step 4: Quality assesment and Quality Control of transcribed values")
-            qa_qc_checked_data = qa_qc(transcribed_table, station, transient_transcription_output_dir, post_QA_QC_transcribed_hydroclimate_data_dir_station, month_filename,
-                                        max_temperature_threshold = float(config['QAQC']['max_temperature_threshold']),
-                                        min_temperature_threshold = float(config['QAQC']['min_temperature_threshold']),
-                                        decimal_places = int(config['QAQC']['decimal_places']),
-                                        uncertainty_margin = float(config['QAQC']['uncertainty_margin']),
-                                        header_rows = int(config['QAQC']['header_rows']),
-                                        multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
-                                        multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
-                                        max_days_for_multi_day_total = int(config['QAQC']['max_days_for_multi_day_total']),
-                                        multi_day_totals_rows = list(map(int, config['QAQC']['multi_day_totals_rows'].split(','))),
-                                        final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
-                                        excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
-                                        excluded_columns = list(map(int, config['QAQC']['excluded_columns'].split(','))),
-                                        daily_temperature_columns = config['QAQC']['daily_temperature_columns'].split(','),
-                                        daily_temperature_columns_and_diurnal_temperature_range = config['QAQC']['daily_temperature_columns_and_diurnal_temperature_range'].split(','),
-                                        daily_precipitation_column = config['QAQC']['daily_precipitation_column'].split(','),
-                                        dry_and_wet_bulb_temperature_columns = config['QAQC']['dry_and_wet_bulb_temperature_columns'].split(','))
+                print(f'Duration of transcribing: {end_time - start_time}')
+                announce_stage('transcription', 'done')
+            else:
+                # Use the table that was transcribed in an earlier run
+                transcribed_table = os.path.join(pre_QA_QC_transcribed_hydroclimate_data_dir_station, f'{month_filename}_pre_QA_QC.xlsx')
+                if 'qaqc' in stages_to_run and not os.path.exists(transcribed_table):
+                    print(f"[ WARN ] No transcribed table found for {month_filename} ({transcribed_table}). Skipping.", flush=True)
+                    continue
+
+            if 'qaqc' in stages_to_run:
+                announce_stage('qaqc', 'start')
+                # Module 5: Quality assessment and Quality Control
+                logger.info("Step 4: Quality assesment and Quality Control of transcribed values")
+                qa_qc_checked_data = qa_qc(transcribed_table, station, transient_transcription_output_dir, post_QA_QC_transcribed_hydroclimate_data_dir_station, month_filename,
+                                            max_temperature_threshold = float(config['QAQC']['max_temperature_threshold']),
+                                            min_temperature_threshold = float(config['QAQC']['min_temperature_threshold']),
+                                            decimal_places = int(config['QAQC']['decimal_places']),
+                                            uncertainty_margin = float(config['QAQC']['uncertainty_margin']),
+                                            header_rows = int(config['QAQC']['header_rows']),
+                                            multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
+                                            multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
+                                            max_days_for_multi_day_total = int(config['QAQC']['max_days_for_multi_day_total']),
+                                            multi_day_totals_rows = list(map(int, config['QAQC']['multi_day_totals_rows'].split(','))),
+                                            final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
+                                            excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
+                                            excluded_columns = list(map(int, config['QAQC']['excluded_columns'].split(','))),
+                                            daily_temperature_columns = config['QAQC']['daily_temperature_columns'].split(','),
+                                            daily_temperature_columns_and_diurnal_temperature_range = config['QAQC']['daily_temperature_columns_and_diurnal_temperature_range'].split(','),
+                                            daily_precipitation_column = config['QAQC']['daily_precipitation_column'].split(','),
+                                            dry_and_wet_bulb_temperature_columns = config['QAQC']['dry_and_wet_bulb_temperature_columns'].split(','))
+                announce_stage('qaqc', 'done')
 
             logger.info(f"Finished processing {month_filename} for station {station}")
         
         except Exception as e:
             logger.error(f"Error processing {month_filename} for station {station}: {e}", exc_info=True)
-            print(f"Error processing {month_filename}: {e}")
+            report_error(f"Error processing {month_filename}: {e}")
             continue
 
     # Module 6: Data formatting and Upload
-    final_refined_daily_hydroclimate_data_dir_station = os.path.join(final_refined_daily_hydroclimate_data_dir, station)
-    os.makedirs(final_refined_daily_hydroclimate_data_dir_station, exist_ok=True)
+    formatted_data = None
+    if 'formatting' in stages_to_run:
+        announce_stage('formatting', 'start')
+        try:
+            final_refined_daily_hydroclimate_data_dir_station = os.path.join(final_refined_daily_hydroclimate_data_dir, station)
+            os.makedirs(final_refined_daily_hydroclimate_data_dir_station, exist_ok=True)
     
-    logger.info(f"Formatting and integrating QA/QC checked data for station {station}")
-    formatted_data = data_formatting(post_QA_QC_transcribed_hydroclimate_data_dir_station, final_refined_daily_hydroclimate_data_dir_station, metadata_file_path, formatted_already_digitized_data_dir, station, 
-                    date_column = config['DataFormatting']['date_column'].strip(),
-                    header_rows = int(config['QAQC']['header_rows']),
-                    multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
-                    multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
-                    excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
-                    additional_excluded_rows = list(map(int, config['QAQC']['additional_excluded_rows'].split(','))),
-                    final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
-                    uncertainty_margin = float(config['QAQC']['uncertainty_margin']),
-                    max_temperature_threshold = float(config['QAQC']['max_temperature_threshold']),
-                    min_temperature_threshold = float(config['QAQC']['min_temperature_threshold']))
+            logger.info(f"Formatting and integrating QA/QC checked data for station {station}")
+            formatted_data = data_formatting(post_QA_QC_transcribed_hydroclimate_data_dir_station, final_refined_daily_hydroclimate_data_dir_station, metadata_file_path, formatted_already_digitized_data_dir, station, 
+                            date_column = config['DataFormatting']['date_column'].strip(),
+                            header_rows = int(config['QAQC']['header_rows']),
+                            multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
+                            multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
+                            excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
+                            additional_excluded_rows = list(map(int, config['QAQC']['additional_excluded_rows'].split(','))),
+                            final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
+                            uncertainty_margin = float(config['QAQC']['uncertainty_margin']),
+                            max_temperature_threshold = float(config['QAQC']['max_temperature_threshold']),
+                            min_temperature_threshold = float(config['QAQC']['min_temperature_threshold']))
+        except Exception as e:
+            logger.error(f"Error formatting the data of station {station}: {e}", exc_info=True)
+            report_error(f"Error formatting the data of station {station}: {e}")
+        announce_stage('formatting', 'done')
 
 
     # Extra module: Validation
-    validation_dir_station = os.path.join(validation_dir, station)
-    manually_transcribed_data_dir_station = os.path.join(manually_transcribed_data_dir, station)
-    # Ensure directories exist
-    os.makedirs(validation_dir_station, exist_ok=True)
-    os.makedirs(manually_transcribed_data_dir_station, exist_ok=True)
+    if 'validation' in stages_to_run:
+        announce_stage('validation', 'start')
+        try:
+            validation_dir_station = os.path.join(validation_dir, station)
+            manually_transcribed_data_dir_station = os.path.join(manually_transcribed_data_dir, station)
+            # Ensure directories exist
+            os.makedirs(validation_dir_station, exist_ok=True)
+            os.makedirs(manually_transcribed_data_dir_station, exist_ok=True)
 
-    validate(manually_transcribed_data_dir_station, post_QA_QC_transcribed_hydroclimate_data_dir_station, validation_dir_station, station,
-             date_column = config['DataFormatting']['date_column'].strip(),
-             daily_temperature_columns = config['QAQC']['daily_temperature_columns'].split(','),
-             header_rows = int(config['QAQC']['header_rows']),
-             multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
-             multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
-             excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
-             additional_excluded_rows = list(map(int, config['QAQC']['additional_excluded_rows'].split(','))),
-             final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
-             uncertainty_margin = float(config['QAQC']['uncertainty_margin']))
-    logger.info(f"Validation complete for station {station}")
+            validate(manually_transcribed_data_dir_station, post_QA_QC_transcribed_hydroclimate_data_dir_station, validation_dir_station, station,
+                     date_column = config['DataFormatting']['date_column'].strip(),
+                     daily_temperature_columns = config['QAQC']['daily_temperature_columns'].split(','),
+                     header_rows = int(config['QAQC']['header_rows']),
+                     multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
+                     multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
+                     excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
+                     additional_excluded_rows = list(map(int, config['QAQC']['additional_excluded_rows'].split(','))),
+                     final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
+                     uncertainty_margin = float(config['QAQC']['uncertainty_margin']))
+            logger.info(f"Validation complete for station {station}")
+        except Exception as e:
+            logger.error(f"Error validating the data of station {station}: {e}", exc_info=True)
+            report_error(f"Error validating the data of station {station}: {e}")
+        announce_stage('validation', 'done')
 
     # Return formatted_data only after validation step completes
     if formatted_data:
@@ -200,6 +245,14 @@ def process_station(station):
 
     
 if __name__ == '__main__':
+    # Report what the search for images found, and stop if there is nothing to process
+    for message in search_messages:
+        print(f"[ WARN ] {message}", flush=True)
+    if not all_stations:
+        print(f"[ ERROR ] No images of data sheets found in {os.path.abspath(full_datadir)} or in the folders within it. Nothing to process.", flush=True)
+        raise SystemExit(1)
+    print(f"Found {sum(len(sheets) for sheets in sheets_by_station.values())} images of data sheets in {len(all_stations)} stations: {', '.join(all_stations)}", flush=True)
+
     # Formatted transcribed and qc checked data for all stations. Can be used to calculate for trends
     all_station_trends = []
 
