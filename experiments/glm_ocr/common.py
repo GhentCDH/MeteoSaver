@@ -48,3 +48,5 @@ def edit_distance(a: str, b: str) -> int:
             cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
         prev = cur
     return prev[-1]
+
+#hklejhgskljehjgspogik
