@@ -15,6 +15,7 @@ from transcription import *
 from quality_assessment_and_quality_control import *
 from data_formatting_and_upload import *
 from validation import *
+from review_page import build_review_page
 from image_discovery import find_sheets
 
 # Logger Setup to inform users of progress through the multiple modules/stages
@@ -48,15 +49,20 @@ region_shapefile_path = config['Directories']['region_shapefile_path'] # Directo
 result_maps_dir = config['Directories']['result_maps_dir'] # Directory for results overlain on maps
 glm_output_dir = config['Directories'].get('glm_output_dir', os.path.join(os.path.dirname(os.path.normpath(pre_QA_QC_transcribed_hydroclimate_data_dir)), '08_GLM_OCR_output')) # Directory for the text as read by GLM-OCR, per sheet
 
+review_dir = config['Directories'].get('review_dir', os.path.join(os.path.dirname(os.path.normpath(pre_QA_QC_transcribed_hydroclimate_data_dir)), '09_review_pages')) # Directory for the review pages (one per sheet, see review_page.py)
+
 # Search full_datadir, and all the folders within it, for the images of the data sheets
 sheets_by_station, search_messages = find_sheets(full_datadir)
 all_stations = list(sheets_by_station)
 
 # Modules to run. By default all of them; a selection can be given on the command line, e.g. --stages qaqc formatting validation
 # (the modules that are left out then use the files that are already in the results directories)
-ALL_STAGES = ['transcription', 'qaqc', 'formatting', 'validation']
+# 'cleanup' is the part of the QA/QC module that does not recalculate anything (formatting of the transcribed text, single-value checks);
+# 'qaqc' is the quality control with the cross-checks that recalculate and confirm values (it includes the clean-up)
+ALL_STAGES = ['transcription', 'cleanup', 'qaqc', 'formatting', 'validation']
 argument_parser = argparse.ArgumentParser()
-argument_parser.add_argument('--stages', nargs='+', choices=ALL_STAGES, default=ALL_STAGES)
+# The review page of each sheet (see review_page.py) is not run by default: it has to be asked for with --stages (the dashboard has a toggle for it)
+argument_parser.add_argument('--stages', nargs='+', choices=ALL_STAGES + ['review'], default=ALL_STAGES)
 stages_to_run = argument_parser.parse_known_args()[0].stages
 
 def report_error(message):
@@ -68,6 +74,29 @@ def report_error(message):
 def announce_stage(stage, event):
     # Marks the start and the end of a module in the output, for the dashboard (src/tui.py) to follow the progress
     print(f"[stage:{stage}] {event}", flush=True)
+
+def detect_table_and_cells(month_data, month_filename, station):
+    # Modules 2 and 3: image pre-processing, and table and cell detection of one sheet
+    logger.info("Step 1: Preprocessing image")
+    image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
+
+    logger.info("Step 2: Detecting table and cells")
+    return table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
+        clip_up = int(config['TableAndCellDetection']['clip_up']), 
+        clip_down = int(config['TableAndCellDetection']['clip_down']),
+        clip_left = int(config['TableAndCellDetection']['clip_left']),
+        clip_right = int(config['TableAndCellDetection']['clip_right']),
+        max_table_width = int(config['TableAndCellDetection']['max_table_width']),
+        max_table_height = int(config['TableAndCellDetection']['max_table_height']),
+        min_cell_width_threshold=int(config['TableAndCellDetection']['min_cell_width_threshold']),
+        max_cell_width_threshold=int(config['TableAndCellDetection']['max_cell_width_threshold']),
+        min_cell_height_threshold=int(config['TableAndCellDetection']['min_cell_height_threshold']),
+        max_cell_height_threshold=int(config['TableAndCellDetection']['max_cell_height_threshold']),
+        space_height_threshold=int(config['TableAndCellDetection']['space_height_threshold']), 
+        space_width_threshold=int(config['TableAndCellDetection']['space_width_threshold']), 
+        max_cell_height_per_box=int(config['TableAndCellDetection']['max_cell_height_per_box']), 
+        no_of_rows=int(config['TableAndCellDetection']['no_of_rows']), 
+        no_of_columns=int(config['TableAndCellDetection']['no_of_columns']))
 
 # Function to process each station's data
 def process_station(station):
@@ -95,33 +124,15 @@ def process_station(station):
         #     print(f"[SKIP] {month_filename} already processed (based on .xlsx).")
         #     continue
 
+        detected_table_and_cells = None  # filled by the transcription module (or by the review module, if only that runs)
+
         # Perform Pre-processing, Transcription, QA/QC, and Post-processing
         try:
             logger.info(f"Processing station {station}, file: {month_filename}")
             if 'transcription' in stages_to_run:
                 announce_stage('transcription', 'start')
-                # Module 2: Image pre-processing
-                logger.info("Step 1: Preprocessing image")
-                image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
-
-                # Module 3: Table and cell detection 
-                logger.info("Step 2: Detecting table and cells")
-                detected_table_and_cells = table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
-                                                       clip_up = int(config['TableAndCellDetection']['clip_up']), 
-                                                       clip_down = int(config['TableAndCellDetection']['clip_down']),
-                                                       clip_left = int(config['TableAndCellDetection']['clip_left']),
-                                                       clip_right = int(config['TableAndCellDetection']['clip_right']),
-                                                       max_table_width = int(config['TableAndCellDetection']['max_table_width']),
-                                                       max_table_height = int(config['TableAndCellDetection']['max_table_height']),
-                                                       min_cell_width_threshold=int(config['TableAndCellDetection']['min_cell_width_threshold']),
-                                                       max_cell_width_threshold=int(config['TableAndCellDetection']['max_cell_width_threshold']),
-                                                       min_cell_height_threshold=int(config['TableAndCellDetection']['min_cell_height_threshold']),
-                                                       max_cell_height_threshold=int(config['TableAndCellDetection']['max_cell_height_threshold']),
-                                                       space_height_threshold=int(config['TableAndCellDetection']['space_height_threshold']), 
-                                                       space_width_threshold=int(config['TableAndCellDetection']['space_width_threshold']), 
-                                                       max_cell_height_per_box=int(config['TableAndCellDetection']['max_cell_height_per_box']), 
-                                                       no_of_rows=int(config['TableAndCellDetection']['no_of_rows']), 
-                                                       no_of_columns=int(config['TableAndCellDetection']['no_of_columns']))
+                # Modules 2 and 3: image pre-processing, and table and cell detection
+                detected_table_and_cells = detect_table_and_cells(month_data, month_filename, station)
             
                 # Module 4: Transcription
                 logger.info("Step 3: Transcribing values using OCR/HTR")
@@ -151,32 +162,60 @@ def process_station(station):
             else:
                 # Use the table that was transcribed in an earlier run
                 transcribed_table = os.path.join(pre_QA_QC_transcribed_hydroclimate_data_dir_station, f'{month_filename}_pre_QA_QC.xlsx')
-                if 'qaqc' in stages_to_run and not os.path.exists(transcribed_table):
+                if ('cleanup' in stages_to_run or 'qaqc' in stages_to_run) and not os.path.exists(transcribed_table):
                     print(f"[ WARN ] No transcribed table found for {month_filename} ({transcribed_table}). Skipping.", flush=True)
                     continue
 
-            if 'qaqc' in stages_to_run:
-                announce_stage('qaqc', 'start')
-                # Module 5: Quality assessment and Quality Control
-                logger.info("Step 4: Quality assesment and Quality Control of transcribed values")
+            # Module 5: Quality assessment and Quality Control, in two parts that can be switched separately:
+            #  - clean-up: formatting of the transcribed text and checks of single values; nothing is recalculated or confirmed
+            #  - quality control: the cross-checks that recalculate values (totals and averages, daily mean and amplitude, vapour pressure
+            #    and humidity) and confirm them. Includes the clean-up, so with both switched on the second pass replaces the output of the first.
+            for stage, cross_checks in (('cleanup', False), ('qaqc', True)):
+                if stage not in stages_to_run:
+                    continue
+                announce_stage(stage, 'start')
+                logger.info(f"Step 4: Quality assesment and Quality Control of transcribed values ({'with' if cross_checks else 'without'} the cross-checks)")
                 qa_qc_checked_data = qa_qc(transcribed_table, station, transient_transcription_output_dir, post_QA_QC_transcribed_hydroclimate_data_dir_station, month_filename,
-                                            max_temperature_threshold = float(config['QAQC']['max_temperature_threshold']),
-                                            min_temperature_threshold = float(config['QAQC']['min_temperature_threshold']),
-                                            decimal_places = int(config['QAQC']['decimal_places']),
-                                            uncertainty_margin = float(config['QAQC']['uncertainty_margin']),
-                                            header_rows = int(config['QAQC']['header_rows']),
-                                            multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
-                                            multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
-                                            max_days_for_multi_day_total = int(config['QAQC']['max_days_for_multi_day_total']),
-                                            multi_day_totals_rows = list(map(int, config['QAQC']['multi_day_totals_rows'].split(','))),
-                                            final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
-                                            excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
-                                            excluded_columns = list(map(int, config['QAQC']['excluded_columns'].split(','))),
-                                            daily_temperature_columns = config['QAQC']['daily_temperature_columns'].split(','),
-                                            daily_temperature_columns_and_diurnal_temperature_range = config['QAQC']['daily_temperature_columns_and_diurnal_temperature_range'].split(','),
-                                            daily_precipitation_column = config['QAQC']['daily_precipitation_column'].split(','),
-                                            dry_and_wet_bulb_temperature_columns = config['QAQC']['dry_and_wet_bulb_temperature_columns'].split(','))
-                announce_stage('qaqc', 'done')
+                                                max_temperature_threshold = float(config['QAQC']['max_temperature_threshold']),
+                                                min_temperature_threshold = float(config['QAQC']['min_temperature_threshold']),
+                                                decimal_places = int(config['QAQC']['decimal_places']),
+                                                uncertainty_margin = float(config['QAQC']['uncertainty_margin']),
+                                                header_rows = int(config['QAQC']['header_rows']),
+                                                multi_day_totals = config.getboolean('QAQC', 'multi_day_totals'),
+                                                multi_day_averages = config.getboolean('QAQC', 'multi_day_averages'),
+                                                max_days_for_multi_day_total = int(config['QAQC']['max_days_for_multi_day_total']),
+                                                multi_day_totals_rows = list(map(int, config['QAQC']['multi_day_totals_rows'].split(','))),
+                                                final_totals_rows = list(map(int, config['QAQC']['final_totals_rows'].split(','))),
+                                                excluded_rows = list(map(int, config['QAQC']['excluded_rows'].split(','))),
+                                                excluded_columns = list(map(int, config['QAQC']['excluded_columns'].split(','))),
+                                                daily_temperature_columns = config['QAQC']['daily_temperature_columns'].split(','),
+                                                daily_temperature_columns_and_diurnal_temperature_range = config['QAQC']['daily_temperature_columns_and_diurnal_temperature_range'].split(','),
+                                                daily_precipitation_column = config['QAQC']['daily_precipitation_column'].split(','),
+                                                dry_and_wet_bulb_temperature_columns = config['QAQC']['dry_and_wet_bulb_temperature_columns'].split(','),
+                                                cross_checks = cross_checks)
+                announce_stage(stage, 'done')
+
+            if 'review' in stages_to_run:
+                announce_stage('review', 'start')
+                try:
+                    glm_output_xlsx = os.path.join(glm_output_dir, station, f'{month_filename}_GLM_OCR_output.xlsx')
+                    post_QA_QC_xlsx = os.path.join(post_QA_QC_transcribed_hydroclimate_data_dir_station, f'{month_filename}_post_QA_QC.xlsx')
+                    if not os.path.exists(glm_output_xlsx):
+                        print(f"[ WARN ] No review page for {month_filename}: the review page shows the text as read by GLM-OCR, and {glm_output_xlsx} was not found (transcribe with the GLM-OCR model).", flush=True)
+                    elif not os.path.exists(post_QA_QC_xlsx):
+                        print(f"[ WARN ] No review page for {month_filename}: {post_QA_QC_xlsx} was not found (run the QA/QC module).", flush=True)
+                    else:
+                        if detected_table_and_cells is None:  # the transcription module did not run: detect the table again, for the images of the cells
+                            detected_table_and_cells = detect_table_and_cells(month_data, month_filename, station)
+                        page_path = build_review_page(station, month_filename, detected_table_and_cells[3], glm_output_xlsx, post_QA_QC_xlsx,
+                                                      os.path.join(review_dir, station, month_filename),
+                                                      manual_xlsx=os.path.join(manually_transcribed_data_dir, station, f'{month_filename}_manually_entered_temperatures.xlsx'),
+                                                      model_note=f"GLM-OCR ({os.path.basename(os.path.dirname(os.path.normpath(config['Transcription'].get('glm_model_dir', ''))))}), {config['Transcription'].get('row_grouping', 'kmeans')} row grouping")
+                        print(f"[review] page={os.path.abspath(page_path)}", flush=True)
+                except Exception as e:
+                    logger.error(f"Error building the review page of {month_filename}: {e}", exc_info=True)
+                    report_error(f"Error building the review page of {month_filename}: {e}")
+                announce_stage('review', 'done')
 
             logger.info(f"Finished processing {month_filename} for station {station}")
         

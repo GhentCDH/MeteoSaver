@@ -52,9 +52,17 @@ def is_highlighted_green(cell, color):
 
     Returns
     -------------- 
-    boolean: 1 (True) if the cell is highlighted with GREEN (i.e. confirmed in Quality Control)
+    boolean: 1 (True) if the cell is highlighted with GREEN (i.e. confirmed in Quality Control), or holds a number in a sheet without cross-checks
 
     '''
+
+    # A sheet that only had the clean-up of the QA/QC module (no cross-checks, see qa_qc) has no confirmed values: all its numbers are accepted as they are
+    try:
+        keywords = cell.parent.parent.properties.keywords or ''
+    except AttributeError:
+        keywords = ''
+    if 'cross_checks=off' in keywords:
+        return isinstance(cell.value, (int, float))
 
     fill = cell.fill.start_color
     if isinstance(fill, openpyxl.styles.colors.Color):

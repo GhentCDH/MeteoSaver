@@ -24,7 +24,9 @@ from meteosaver_app.pipeline_runner import (
     classify_line,
     describe_exit,
     format_duration,
+    open_in_browser,
     parse_progress,
+    parse_review_marker,
     parse_stage_marker,
     tesseract_available,
 )
@@ -43,6 +45,7 @@ class Stage:
     number: int
     key: str
     label: str
+    default_on: bool = True  # whether the stage is ticked when the dashboard starts
     checkbox: Checkbox = field(init=False, default=None)
     status: Label = field(init=False, default=None)
     started: float = field(init=False, default=0.0)
@@ -257,11 +260,16 @@ class MeteoSaverApp(App):
         self.config_path = config_path
         self.config = read_config(config_path)
         self.stages: list[Stage] = [
-            Stage(1, "transcription", "1/4  TRANSCRIPTION"),
-            Stage(2, "qaqc", "2/4  QUALITY CONTROL (QA/QC)"),
-            Stage(3, "formatting", "3/4  DATA FORMATTING"),
-            Stage(4, "validation", "4/4  VALIDATION"),
+            Stage(1, "transcription", "1/5  TRANSCRIPTION"),
+            # The QA/QC module in two parts: the clean-up recalculates nothing, the quality control (which includes it) does
+            Stage(2, "cleanup", "2/5  CLEAN-UP (NO RECALC)"),
+            Stage(3, "qaqc", "3/5  QUALITY CONTROL (RECALC)"),
+            Stage(4, "formatting", "4/5  DATA FORMATTING"),
+            Stage(5, "validation", "5/5  VALIDATION"),
+            # Not a module of the pipeline itself: a page per sheet to check the readings, opened in the browser (needs GLM-OCR)
+            Stage(6, "review", "+    REVIEW PAGE (BROWSER)", default_on=False),
         ]
+        self._review_pages: list[str] = []  # the review pages written by this run
         self._process: subprocess.Popen | None = None
         self._aborted = False
         self._elapsed_timer: Timer | None = None
@@ -296,7 +304,7 @@ class MeteoSaverApp(App):
                         yield Label("STAGES", classes="panel-title")
                         for stage in self.stages:
                             with Horizontal(classes="stage-row"):
-                                stage.checkbox = Checkbox(value=True, id=f"stage-{stage.key}-check")
+                                stage.checkbox = Checkbox(value=stage.default_on, id=f"stage-{stage.key}-check")
                                 yield stage.checkbox
                                 yield Label(stage.label, classes="stage-label")
                                 stage.status = Label("PENDING", classes="stage-status status-pending")
@@ -401,7 +409,11 @@ class MeteoSaverApp(App):
         results = self._value("results-input")
         ocr_model = self.query_one("#ocr-model-select", Select).value
         transcribing = self.stages[0].checkbox.value
+        reviewing = any(stage.key == "review" and stage.checkbox.value for stage in self.stages)
 
+        if reviewing and ocr_model != "GLM-OCR":
+            self._log("[ FAIL ] The review page shows the text as read by GLM-OCR: select the GLM-OCR model, or switch the review page off.", "fail")
+            return None
         if not images or not results:
             self._log("[ FAIL ] The IMAGES and RESULTS directories are required.", "fail")
             return None
@@ -494,6 +506,7 @@ class MeteoSaverApp(App):
 
         self._aborted = False
         self._errors = []
+        self._review_pages = []
         self._in_error = False
         self._set_progress("")
         self.screen.remove_class("has-errors")
@@ -535,6 +548,11 @@ class MeteoSaverApp(App):
                         self._finish_active_stages()  # a sheet that failed never reported its module as done
                         self.call_from_thread(self._set_progress, progress)
                         self.call_from_thread(self._log, f"\n--- {progress} ---", "header")
+                        continue
+
+                    page = parse_review_marker(line)
+                    if page is not None:
+                        self._show_review_page(page)
                         continue
 
                     marker = parse_stage_marker(line)
@@ -591,6 +609,18 @@ class MeteoSaverApp(App):
             self._active_stages = []
             self._process = None
             self.call_from_thread(self._reset_buttons)
+
+    def _show_review_page(self, page: str) -> None:
+        """ The first review page of a run is opened in the browser as soon as it is written; the others are only
+            logged, so a run over many sheets does not open a tab for each. """
+        self._review_pages.append(page)
+        if len(self._review_pages) == 1:
+            if open_in_browser(page):
+                self.call_from_thread(self._log, f"Review page opened in the browser: {page}", "ok")
+            else:
+                self.call_from_thread(self._log, f"Review page (no browser could be started, open this file): {page}", "warn")
+        else:
+            self.call_from_thread(self._log, f"Review page: {page}", "dim")
 
     def _begin(self, stage: Stage) -> None:
         """ Called from the pipeline worker thread when a module starts on a sheet or station. """

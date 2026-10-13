@@ -5,6 +5,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,7 @@ DEFAULT_CONFIG = REPO_ROOT / "configuration.ini"
 # rather than imported, since importing main.py would load the models into the dashboard.
 STAGE_MARKER = re.compile(r"^\[stage:(\w+)\] (start|done)$")
 PROGRESS_MARKER = re.compile(r"^\[progress\] station=(\S+) \((\d+)/(\d+)\) sheet=(\d+)/(\d+) file=(.+)$")
+REVIEW_MARKER = re.compile(r"^\[review\] page=(.+)$")  # printed by main.py for each review page it wrote
 
 ERROR_PREFIX = "[ ERROR ]"
 ERROR_CONTINUATION = "[ ERROR ] |"  # a further line of the same error (its traceback)
@@ -30,6 +32,20 @@ def parse_stage_marker(line: str) -> tuple[str, str] | None:
     """ (stage key, "start" | "done") for a stage marker line, None for any other line. """
     match = STAGE_MARKER.match(line.strip())
     return (match.group(1), match.group(2)) if match else None
+
+
+def parse_review_marker(line: str) -> str | None:
+    """ The path of the review page for a review marker line, None for any other line. """
+    match = REVIEW_MARKER.match(line.strip())
+    return match.group(1) if match else None
+
+
+def open_in_browser(page: str) -> bool:
+    """ Opens a local HTML file in the default browser. False if no browser could be started. """
+    try:
+        return webbrowser.open(Path(page).resolve().as_uri())
+    except webbrowser.Error:
+        return False
 
 
 def parse_progress(line: str) -> str | None:

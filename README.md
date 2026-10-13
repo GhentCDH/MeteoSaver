@@ -42,6 +42,7 @@ Below is the structure for this project.
 |   |                                                          and (vi) data formatting and upload
 │   │
 │   ├── tui.py                                              <- Dashboard to set the main configuration settings and run the modules from the terminal
+│   ├── review_page.py                                      <- Builds the review page of a sheet: crops, text as read, value after QA/QC (column by column)
 │   │
 │   ├── meteosaver_app                                      <- Scripts of the dashboard (layout, colours, logo, reading/writing of the configuration file)
 │   │
@@ -154,9 +155,19 @@ Instead of editing the configuration file by hand and running [main.py](src/main
 uv run python src/tui.py
 ```
 
-The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, QA/QC, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
+The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, clean-up, quality control, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
 
 The selection of modules is also available without the dashboard, e.g. `uv run python src/main.py --stages qaqc formatting validation`.
+
+#### Clean-up and quality control
+The QA/QC module has two switches. **Clean-up** formats the transcribed text (digits to decimals, trimming of values that are too long) and checks single values (a daily temperature in the 80s read as the 30s, values outside the minimum and maximum temperature, which are marked red). It recalculates nothing and confirms nothing. **Quality control** also does that, and adds the cross-checks that recalculate values and confirm them (marked green): multi-day totals and averages, the daily mean and amplitude, and the vapour pressure, humidity and wet-bulb checks. Quality control includes the clean-up, so with both switched on the second pass replaces the output of the first; `--stages cleanup` and `--stages qaqc` select them without the dashboard.
+
+Data formatting and validation use the values that quality control confirmed. For a sheet that only had the clean-up (the workbook records this), they use every number as it is.
+
+#### Review page
+The dashboard has one more switch, **REVIEW PAGE (BROWSER)**, off by default. When it is on, a page is written for each sheet (to `09_review_pages/<station>/<image file>/index.html` next to the other results, or to `review_dir` of the configuration file) and the first one opens in the browser as soon as it is ready. The page shows the table column by column, with the crop of each cell that GLM-OCR read, the text as it was read, the value after QA/QC and, for the temperature columns, the manual transcription if there is one in `manually_transcribed_data_dir`. Green and red mark agreement with the manual value; amber marks a reading that QA/QC changed. Use the left and right arrow keys to change column, and "differences only" to hide the cells that are fine.
+
+The page needs the GLM-OCR model (it shows the text as GLM-OCR read it). Without the dashboard: `uv run python src/main.py --stages transcription qaqc review`; the module is [review_page.py](src/review_page.py).
 
 ### Minimal Working Example (MWE)
 You can run the entire script in this repository as a Minimal Working Example (MWE) without modifying any configuration settings. Simply set up the Python environment on your personal computer, i.e. ```local```, and execute the script using [main.py](https://github.com/VUB-HYDR/MeteoSaver/blob/7aeab0f526b44056c062407df7cfe467e20a67d8/src/main.py) or run the MWE provided on this repository ([here](https://github.com/VUB-HYDR/MeteoSaver/tree/81c420360c39258ea67087764dee15d8ceb634cb/manual_and_minimal_working_example)) in Jupyter Notebooks.
