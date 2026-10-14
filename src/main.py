@@ -31,6 +31,9 @@ config_file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'con
 config_file_path = os.environ.get('METEOSAVER_CONFIG', config_file_path) # Optionally, another configuration file can be selected with this environment variable
 config.read(config_file_path)
 
+# The fine-tuned GLM-OCR model on Hugging Face, used when glm_model is not set in the configuration file
+DEFAULT_GLM_MODEL = 'GhentCDH/GLM-OCR-MeteoSaver'
+
 # Get run_mode and number of processors from configuration file
 run_mode = config['General']['run_mode']
 num_processors = int(config['General'].get('num_processors', 1))
@@ -155,7 +158,7 @@ def process_station(station):
                                                   no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
                                                   no_of_rows_including_headers=int(config['TableAndCellDetection']['no_of_rows_including_headers']),
                                                   row_grouping=config['Transcription'].get('row_grouping', 'kmeans'),
-                                                  glm_model_dir=config['Transcription'].get('glm_model_dir'),
+                                                  glm_model=config['Transcription'].get('glm_model', DEFAULT_GLM_MODEL),
                                                   glm_python=config['Transcription'].get('glm_python', ''),
                                                   glm_resize_height=int(config['Transcription'].get('glm_resize_height', 128)),
                                                   glm_batch_size=int(config['Transcription'].get('glm_batch_size', 64)),
@@ -216,7 +219,7 @@ def process_station(station):
                         page_path = build_review_page(station, month_filename, detected_table_and_cells[3], glm_output_xlsx, post_QA_QC_xlsx,
                                                       os.path.join(review_dir, station, month_filename),
                                                       manual_xlsx=os.path.join(manually_transcribed_data_dir, station, f'{month_filename}_manually_entered_temperatures.xlsx'),
-                                                      model_note=f"GLM-OCR ({os.path.basename(os.path.dirname(os.path.normpath(config['Transcription'].get('glm_model_dir', ''))))}), {config['Transcription'].get('row_grouping', 'kmeans')} row grouping")
+                                                      model_note=f"GLM-OCR ({config['Transcription'].get('glm_model', DEFAULT_GLM_MODEL)}), {config['Transcription'].get('row_grouping', 'kmeans')} row grouping")
                         print(f"[review] page={os.path.abspath(page_path)}", flush=True)
                 except Exception as e:
                     logger.error(f"Error building the review page of {month_filename}: {e}", exc_info=True)

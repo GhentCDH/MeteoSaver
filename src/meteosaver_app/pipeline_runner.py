@@ -11,6 +11,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAIN_SCRIPT = REPO_ROOT / "src" / "main.py"
 DEFAULT_CONFIG = REPO_ROOT / "configuration.ini"
+DEFAULT_GLM_MODEL = "GhentCDH/GLM-OCR-MeteoSaver"  # the fine-tuned GLM-OCR model on Hugging Face (glm_model in the configuration file)
+HF_MODEL_ID = re.compile(r"[\w.-]+/[\w.-]+")  # owner/name
 
 # Printed by main.py around each module (announce_stage) and for each sheet. Matched here by format
 # rather than imported, since importing main.py would load the models into the dashboard.
@@ -87,6 +89,24 @@ def check_gpu() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
     name = result.stdout.strip()
     return bool(name), name or "no GPU found, GLM-OCR will be slow"
+
+
+def check_glm_model(model_id: str) -> tuple[bool, str]:
+    """ Whether the GLM-OCR model can be loaded: reachable on Hugging Face, or already in the Hugging Face cache (offline use). """
+    from huggingface_hub import model_info, try_to_load_from_cache
+    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+    cached = isinstance(try_to_load_from_cache(model_id, "config.json"), str)
+    try:
+        model_info(model_id)
+    except (RepositoryNotFoundError, GatedRepoError):
+        return False, (f"{model_id} not found on Hugging Face, or private without access. Check glm_model, or log in with 'uv run hf auth login'"
+                       + (" (a copy in the cache will be used)" if cached else ""))
+    except Exception as e:  # no internet connection, Hugging Face down, ...
+        if cached:
+            return True, f"{model_id} (from the cache; Hugging Face not reachable: {type(e).__name__})"
+        return False, f"{model_id} cannot be downloaded ({type(e).__name__}: {e}) and is not in the cache"
+    return True, f"{model_id} ({'in the cache' if cached else 'downloaded on first use, about 2.2 GB'})"
 
 
 def describe_exit(returncode: int) -> str:

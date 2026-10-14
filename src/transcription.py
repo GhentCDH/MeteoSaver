@@ -795,7 +795,7 @@ def expand_bounding_box(contour):
     return x, y, w, h
 
 
-def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model_dir=None, glm_python='', glm_resize_height=128, glm_batch_size=64, glm_output_dir_station=None):
+def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model=None, glm_python='', glm_resize_height=128, glm_batch_size=64, glm_output_dir_station=None):
     '''
     Performs OCR (Optical Character Recognition) on detected table cells from a pre-processed image 
     to extract and organize textual data into an Excel workbook.
@@ -844,7 +844,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     row_grouping : str
         How detected cells are grouped into rows: 'kmeans' (clustering of the top and midpoint coordinates) or 'columnwise' (see organize_contours_columnwise).
 
-    glm_model_dir, glm_python, glm_resize_height, glm_batch_size
+    glm_model, glm_python, glm_resize_height, glm_batch_size
         Settings for 'GLM-OCR' (see GlmOcrClient in glm_ocr_client.py). Only used if 'GLM-OCR' is the selected model.
 
     glm_output_dir_station : str
@@ -866,7 +866,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     #     paddle_ocr = PaddleOCR(use_angle_cls=True, lang = 'en', use_gpu=False) ## Run only once to download all required files
     if ocr_model == 'GLM-OCR':
         ## Lauching GLM-OCR (the model is loaded on the first sheet and kept in memory for the next ones)
-        glm_ocr_client = get_glm_ocr_client(glm_model_dir, glm_python, glm_resize_height, glm_batch_size)
+        glm_ocr_client = get_glm_ocr_client(glm_model, glm_python, glm_resize_height, glm_batch_size)
 
     # Contours of bounding boxes detected in cell recognition
     new_contours = detected_table_cells[0]

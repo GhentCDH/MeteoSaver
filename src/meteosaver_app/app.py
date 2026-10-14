@@ -18,8 +18,11 @@ from meteosaver_app.clipboard import ClipboardInput
 from meteosaver_app.config_file import output_directories, read_config, results_directory, write_values
 from meteosaver_app.pipeline_runner import (
     ERROR_CONTINUATION,
+    DEFAULT_GLM_MODEL,
+    HF_MODEL_ID,
     REPO_ROOT,
     build_pipeline_command,
+    check_glm_model,
     check_gpu,
     classify_line,
     describe_exit,
@@ -350,8 +353,8 @@ class MeteoSaverApp(App):
                         yield Label("Row grouping")
                         yield Select([(grouping, grouping) for grouping in dict.fromkeys(ROW_GROUPINGS + [row_grouping])],
                                      value=row_grouping, allow_blank=False, id="row-grouping-select")
-                        yield Label("GLM-OCR model dir")
-                        yield ClipboardInput(value=self._setting("Transcription", "glm_model_dir"), id="glm-model-input")
+                        yield Label("GLM-OCR model (Hugging Face ID)")
+                        yield ClipboardInput(value=self._setting("Transcription", "glm_model", DEFAULT_GLM_MODEL), id="glm-model-input")
                         yield Label("GLM-OCR batch size")
                         yield ClipboardInput(value=self._setting("Transcription", "glm_batch_size", "64"), id="glm-batch-input")
 
@@ -390,7 +393,8 @@ class MeteoSaverApp(App):
 
         ocr_model = self.query_one("#ocr-model-select", Select).value
         if ocr_model == "GLM-OCR":
-            self._log_check("GLM-OCR model", self._path(self._value("glm-model-input")).is_dir())
+            glm_model = self._value("glm-model-input")
+            self.run_worker(lambda: self._startup_glm_model_check(glm_model), thread=True, group="glm-model-check")
             self.run_worker(self._startup_gpu_check, thread=True, group="gpu-check")
         elif ocr_model == "Tesseract-OCR":
             self._log_check("Tesseract", tesseract_available())
@@ -409,6 +413,10 @@ class MeteoSaverApp(App):
             return False
         self._log(f"[ OK ]  Images: {sheets} sheets in {len(sheets_by_station)} stations ({', '.join(sheets_by_station)})", "ok")
         return True
+
+    def _startup_glm_model_check(self, glm_model: str) -> None:
+        ok, detail = check_glm_model(glm_model)
+        self.call_from_thread(self._log, f"[ {'OK' if ok else 'WARN'} ]  GLM-OCR model: {detail}", "ok" if ok else "warn")
 
     def _startup_gpu_check(self) -> None:
         ok, detail = check_gpu()
@@ -460,15 +468,15 @@ class MeteoSaverApp(App):
             settings.update(output_directories(self.config, results))
 
         if ocr_model == "GLM-OCR":
-            model_dir = self._value("glm-model-input")
+            glm_model = self._value("glm-model-input")
             batch_size = self._value("glm-batch-input")
-            if transcribing and not self._path(model_dir).is_dir():
-                self._log(f"[ FAIL ] GLM-OCR model dir not found: {self._path(model_dir)}", "fail")
+            if not HF_MODEL_ID.fullmatch(glm_model):
+                self._log(f"[ FAIL ] The GLM-OCR model must be a Hugging Face model ID like {DEFAULT_GLM_MODEL}: {glm_model or '(empty)'}", "fail")
                 return None
             if not (batch_size.isdigit() and int(batch_size) > 0):
                 self._log(f"[ FAIL ] GLM-OCR batch size must be a positive number: {batch_size}", "fail")
                 return None
-            settings[("Transcription", "glm_model_dir")] = model_dir
+            settings[("Transcription", "glm_model")] = glm_model
             settings[("Transcription", "glm_batch_size")] = batch_size
         elif ocr_model == "Tesseract-OCR" and transcribing and not tesseract_available():
             self._log("[ FAIL ] Tesseract-OCR is selected, but the tesseract program was not found.", "fail")

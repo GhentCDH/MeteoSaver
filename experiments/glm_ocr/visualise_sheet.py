@@ -91,7 +91,7 @@ def run_native(station: str, f: str, cfg, work: Path):
         no_of_rows=int(t["no_of_rows"]), no_of_columns=int(t["no_of_columns"]),
         no_of_rows_including_headers=int(t["no_of_rows_including_headers"]),
         row_grouping=cfg["Transcription"].get("row_grouping", "kmeans"),
-        glm_model_dir=str(MODEL), glm_python=str(cs.GLM_PY), glm_resize_height=int(cfg["Transcription"].get("glm_resize_height", 128)),
+        glm_model=str(MODEL), glm_python=str(cs.GLM_PY), glm_resize_height=int(cfg["Transcription"].get("glm_resize_height", 128)),
         glm_batch_size=int(cfg["Transcription"].get("glm_batch_size", 64)), glm_output_dir_station=str(glm_dir / station))
     qq.qa_qc(
         table, station, str(transient), str(post), f,

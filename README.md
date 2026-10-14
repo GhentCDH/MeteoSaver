@@ -106,6 +106,7 @@ To add or update a package, use `uv add <package>` or `uv lock --upgrade-package
 > [!NOTE]
 > Tesseract-OCR itself is not a Python package and has to be installed separately if you select it as OCR/HTR model (see the [configuration module](configuration.ini)).
 > GLM-OCR is installed with the environment (torch and transformers). A GPU is strongly recommended for it; on Linux, uv installs the CUDA version of torch.
+> The fine-tuned model, [GhentCDH/GLM-OCR-MeteoSaver](https://huggingface.co/GhentCDH/GLM-OCR-MeteoSaver) (`glm_model` in the configuration file), is downloaded from Hugging Face on first use (about 2.2 GB) and then read from the Hugging Face cache.
 
 ### Docker
 

@@ -18,8 +18,9 @@ class GlmOcrClient:
 
     Parameters
     --------------
-    model_dir : str
-        Directory of the (fine-tuned) GLM-OCR model.
+    model : str
+        Hugging Face model ID of the fine-tuned GLM-OCR model (e.g. GhentCDH/GLM-OCR-MeteoSaver).
+        It is downloaded on first use and then read from the Hugging Face cache.
     python : str
         Python interpreter of an environment with torch>=2.10 and transformers>=5.3. Leave empty to use the current one.
     resize_height : int
@@ -28,19 +29,20 @@ class GlmOcrClient:
         Number of cell images read at once.
     '''
 
-    def __init__(self, model_dir, python='', resize_height=128, batch_size=64):
-        if not os.path.isdir(model_dir):
-            raise FileNotFoundError(f"GLM-OCR model directory not found: {model_dir}. Check glm_model_dir in the configuration file.")
+    def __init__(self, model, python='', resize_height=128, batch_size=64):
+        if not model:
+            raise ValueError("No GLM-OCR model: set glm_model (a Hugging Face model ID) in the configuration file.")
         worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'glm_ocr_worker.py')
         self.process = subprocess.Popen(
-            [python or sys.executable, '-u', worker, '--model', model_dir, '--resize-height', str(resize_height), '--batch-size', str(batch_size)],
+            [python or sys.executable, '-u', worker, '--model', model, '--resize-height', str(resize_height), '--batch-size', str(batch_size)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         self._receive()  # Wait until the model is loaded
 
     def _receive(self):
         line = self.process.stdout.readline()
         if not line:
-            raise RuntimeError("The GLM-OCR worker stopped unexpectedly (see its error message above). Check glm_python and glm_model_dir in the configuration file.")
+            raise RuntimeError("The GLM-OCR worker stopped unexpectedly (see its error message above). Check glm_python and glm_model in the configuration file: the model is downloaded from Hugging Face "
+                               "on first use, which needs an internet connection (and 'hf auth login' for a private model).")
         return json.loads(line)
 
     def read(self, images):
@@ -64,12 +66,12 @@ class GlmOcrClient:
             self.process.wait()
 
 
-def get_glm_ocr_client(model_dir, python='', resize_height=128, batch_size=64):
+def get_glm_ocr_client(model, python='', resize_height=128, batch_size=64):
     '''
     Returns the GLM-OCR client for these settings, starting its worker on first use so that the model is loaded once and not per sheet.
     '''
-    key = (os.getpid(), model_dir, python, resize_height, batch_size)
+    key = (os.getpid(), model, python, resize_height, batch_size)
     if key not in _clients:
-        _clients[key] = GlmOcrClient(model_dir, python, resize_height, batch_size)
+        _clients[key] = GlmOcrClient(model, python, resize_height, batch_size)
         atexit.register(_clients[key].close)
     return _clients[key]
