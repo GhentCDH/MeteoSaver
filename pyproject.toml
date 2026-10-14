@@ -9,7 +9,8 @@ dependencies = [
     "easyocr>=1.7.2",
     "matplotlib>=3.8",
     "numpy>=1.26",
-    "opencv-python-headless>=4.6",
+    # opencv-contrib-python: a superset of opencv-python(-headless), with the GUI that taulu needs to annotate the header of the table
+    "opencv-contrib-python>=4.13",
     "openpyxl>=3.1.2",
     # pandas 3 no longer accepts the 'M' frequency used in the data formatting module
     "pandas>=2.2,<3",
@@ -17,6 +18,8 @@ dependencies = [
     "pytesseract>=0.3.13",
     "scikit-learn>=1.4",
     "scipy>=1.11",
+    # taulu: cell detection on the grid of the table (cell_detection_engine = taulu in configuration.ini)
+    "taulu>=3.0.2",
     # GLM-OCR
     "textual>=8.2.8",
     "textualeffects>=0.2.0",
@@ -27,3 +30,9 @@ dependencies = [
 [tool.uv]
 # The scripts in src/ are run directly; there is no package to build or install
 package = false
+# Only one OpenCV package can be installed in an environment (they all provide cv2 and overwrite each other).
+# taulu and easyocr ask for opencv-python and opencv-python-headless; opencv-contrib-python above replaces both
+override-dependencies = [
+    "opencv-python; sys_platform == 'never'",
+    "opencv-python-headless; sys_platform == 'never'",
+]

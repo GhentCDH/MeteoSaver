@@ -795,6 +795,18 @@ def expand_bounding_box(contour):
     return x, y, w, h
 
 
+def grid_cell_box(contour, margin=4):
+    '''
+    Returns the bounding box (x, y, w, h) of a cell of the grid detected by taulu (see taulu_cell_detection.py), with a small margin.
+    Unlike the text detected by the default engine, these cells follow the ruled lines of the table, so they are not enlarged by expand_bounding_box
+    (that would take in the handwriting of the rows above and below).
+    '''
+    x, y, w, h = cv2.boundingRect(contour)
+    x = max(0, x - margin)
+    y = max(0, y - margin)
+    return x, y, w + 2 * margin, h + 2 * margin
+
+
 def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model_dir=None, glm_python='', glm_resize_height=128, glm_batch_size=64, glm_output_dir_station=None):
     '''
     Performs OCR (Optical Character Recognition) on detected table cells from a pre-processed image 
@@ -901,6 +913,13 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
             'Top': organize_contours_columnwise
         }
 
+    # With the taulu cell detection engine, the cells come with their row and column (cell_grid[row][column]): they are placed
+    # in the Excel sheet as they are, without grouping them into rows, padding the months with fewer than 31 days, or adding missing boxes
+    cell_grid = detected_table_cells[5] if len(detected_table_cells) > 5 else None
+    if cell_grid is not None:
+        organize_methods = {'Midpoint': None, 'Top': None}  # Both arrangements are the same; the cells are only read once (see ocr_results)
+    cell_box = grid_cell_box if cell_grid is not None else expand_bounding_box
+
     # Transcribed text per bounding box. Most boxes are the same in both arrangements above, so each one is only read once
     ocr_results = {}
     glm_texts_per_box = {}  # The text exactly as read by GLM-OCR, per bounding box
@@ -922,24 +941,29 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
         # Organize the contours
         # organized_rows = organize_method(new_contours, no_of_rows)
 
-        organized_rows = organize_method(new_contours, month_filename)
-        # organized_rows = organize_method(new_contours, max_rows=43, row_threshold=50)
+        if cell_grid is not None:
+            # taulu: the rows and columns of the cells are known
+            organized_rows = [list(row) for row in cell_grid]
+            sorted_rows = [list(row) for row in cell_grid]
+        else:
+            organized_rows = organize_method(new_contours, month_filename)
+            # organized_rows = organize_method(new_contours, max_rows=43, row_threshold=50)
 
-        # Sorting the cell (bounding box) rows from first to last using trimmed mean of coordinates
-        sorted_rows = sorted(organized_rows, key=lambda row: calculate_trimmed_mean([cv2.boundingRect(c)[1] + cv2.boundingRect(c)[3] // 2 for c in row]))
+            # Sorting the cell (bounding box) rows from first to last using trimmed mean of coordinates
+            sorted_rows = sorted(organized_rows, key=lambda row: calculate_trimmed_mean([cv2.boundingRect(c)[1] + cv2.boundingRect(c)[3] // 2 for c in row]))
 
-        # Get the expected max rows (dynamically)
-        max_rows = get_max_rows_from_filename(month_filename)
+            # Get the expected max rows (dynamically)
+            max_rows = get_max_rows_from_filename(month_filename)
 
-        # Calculate how many rows need to be padded
-        missing_rows = 43 - max_rows  # Always ensuring 43 rows
+            # Calculate how many rows need to be padded
+            missing_rows = 43 - max_rows  # Always ensuring 43 rows
 
-        # If there are missing rows, pad `None` before the last two rows (totals & averages)
-        if missing_rows > 0:
-            # Ensure we don't disturb the last two rows
-            sorted_rows = sorted_rows[:-2] + [[None]] * missing_rows + sorted_rows[-2:]
+            # If there are missing rows, pad `None` before the last two rows (totals & averages)
+            if missing_rows > 0:
+                # Ensure we don't disturb the last two rows
+                sorted_rows = sorted_rows[:-2] + [[None]] * missing_rows + sorted_rows[-2:]
 
-        sorted_rows = add_missing_boxes(sorted_rows)  # Add missing boxes per row where there are gaps
+            sorted_rows = add_missing_boxes(sorted_rows)  # Add missing boxes per row where there are gaps
 
         ## FOR ILLUSTRATION PURPOSES: Uncomment the following lines if you want to see an example of how the sorting function works. This is for illustration purposes only and not necessary for the main functionality of the script. 
         
@@ -999,9 +1023,9 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
         # plt.show()
     
 
-        # Sort boxes within each column of each row by y-coordinate
+        # Sort boxes within each column of each row by y-coordinate (not with taulu: there the order of the cells in a row is the order of the columns)
         for row in sorted_rows:
-            if row is not None:  # Skip None values to avoid errors
+            if row is not None and cell_grid is None:  # Skip None values to avoid errors
                 row.sort(key=lambda c: cv2.boundingRect(c)[1])
 
         if ocr_model == 'GLM-OCR':
@@ -1011,7 +1035,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                 for contour in row or []:
                     if contour is None:
                         continue
-                    box = expand_bounding_box(contour)
+                    box = cell_box(contour)
                     x, y, w, h = box
                     if box not in ocr_results and box not in boxes_to_read and table_copy[y:y+h, x:x+w].size != 0:
                         boxes_to_read.append(box)
@@ -1027,12 +1051,12 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
             if row is None:
                 continue  # Skip processing for empty rows
             
-            for contour in row:
+            for column_index, contour in enumerate(row, start=1):
 
                 if contour is None:
                     continue  # Padding row (months with fewer than 31 days): there is no cell to read
 
-                x, y, w, h = expand_bounding_box(contour)
+                x, y, w, h = cell_box(contour)
 
                  # Draw bounding box on the visualization image
                 cv2.rectangle(ROIs_image, (x, y), (x + w, y + h), (0, 0, 255), 3)
@@ -1119,7 +1143,10 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
 
                         # Attain the Ms Excel Template cell coordinates
                         # # Determine the cell reference using the x coodrinate of the bounding box, row index, maximum column number, and image/table width
-                        cell_ref = calculate_cell_reference(x, w, row_index, assigned_columns_per_row, max_columns=24, table_width=image_width) # e.g., A1, B5, etc.
+                        if cell_grid is not None:
+                            cell_ref = f'{openpyxl.utils.get_column_letter(column_index)}{row_index}'  # taulu: the column of the cell is known
+                        else:
+                            cell_ref = calculate_cell_reference(x, w, row_index, assigned_columns_per_row, max_columns=24, table_width=image_width) # e.g., A1, B5, etc.
                         
                         # Place the OCR/HTR recognized text in its respective Ms Excel cell 
                         ws[cell_ref].value = ocr_result.strip()  # Remove leading/trailing whitespace   

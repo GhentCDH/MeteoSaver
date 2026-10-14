@@ -1,0 +1,20 @@
+# taulu configuration for MeteoSaver (cell_detection_engine = taulu in configuration.ini).
+# All settings: https://github.com/GhentCDH/taulu (TauluConfig). Paths are relative to this file.
+
+# Image of the header of the table, made with: uv run src/annotate_taulu_header.py <image of a sheet>
+# The annotation (the ruled lines of the header) is saved next to it, as header.json
+template_path = "header.png"
+
+# The rows of the data sheets differ in height (days, and the taller Tot./Moy. rows): detect the height of each row from the image
+auto_row_heights = true
+# Range of the row heights, relative to the height of the header
+min_row_height_factor = 0.1
+max_row_height_factor = 0.22
+
+# Binarization threshold (0.0-1.0). Higher = less noise
+binarization_sensitivity = 0.25
+# Search area around each expected corner of a cell, in pixels. Larger tolerates more warping of the sheet, but finds more false corners
+search_radius = 60
+# Size of the cross-shaped kernel that finds the corners of the cells (odd), and the thickness of the ruled lines, in pixels
+intersection_kernel_size = 41
+line_thickness = 10

@@ -11,6 +11,7 @@ import pandas as pd
 # Import all the required modules
 from image_preprocessing_module import *
 from table_and_cell_detection_model import *
+from taulu_cell_detection import taulu_table_and_cell_detection
 from transcription import *
 from quality_assessment_and_quality_control import *
 from data_formatting_and_upload import *
@@ -80,7 +81,17 @@ def detect_table_and_cells(month_data, month_filename, station):
     logger.info("Step 1: Preprocessing image")
     image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
 
-    logger.info("Step 2: Detecting table and cells")
+    # The cell detection engine: 'opencv' (detection of the handwritten text, see table_and_cell_detection_model.py) or 'taulu' (detection of the grid of the table, see taulu_cell_detection.py)
+    cell_detection_engine = config['TableAndCellDetection'].get('cell_detection_engine', 'opencv')
+    logger.info(f"Step 2: Detecting table and cells ({cell_detection_engine})")
+    if cell_detection_engine == 'taulu':
+        return taulu_table_and_cell_detection(binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
+            taulu_config = config['TableAndCellDetection'].get('taulu_config', 'taulu/taulu.toml'),
+            skip_rows = int(config['TableAndCellDetection'].get('taulu_skip_rows', 0)),
+            skip_columns_left = int(config['TableAndCellDetection'].get('taulu_skip_columns_left', 0)),
+            skip_columns_right = int(config['TableAndCellDetection'].get('taulu_skip_columns_right', 0)),
+            no_of_rows = int(config['TableAndCellDetection']['no_of_rows']),
+            no_of_columns = int(config['TableAndCellDetection']['no_of_columns']))
     return table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
         clip_up = int(config['TableAndCellDetection']['clip_up']), 
         clip_down = int(config['TableAndCellDetection']['clip_down']),

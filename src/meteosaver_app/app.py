@@ -4,6 +4,7 @@ in one subprocess, streaming its log. """
 import os
 import subprocess
 import time
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,10 +20,12 @@ from meteosaver_app.config_file import output_directories, read_config, results_
 from meteosaver_app.pipeline_runner import (
     ERROR_CONTINUATION,
     REPO_ROOT,
+    build_annotate_header_command,
     build_pipeline_command,
     check_gpu,
     classify_line,
     describe_exit,
+    display_available,
     format_duration,
     open_in_browser,
     parse_progress,
@@ -38,6 +41,7 @@ from meteosaver_app.theme import (
 
 OCR_MODELS = ["GLM-OCR", "Tesseract-OCR", "EasyOCR"]
 ROW_GROUPINGS = ["columnwise", "kmeans"]
+DETECTION_ENGINES = ["opencv", "taulu"]
 
 
 @dataclass
@@ -271,6 +275,7 @@ class MeteoSaverApp(App):
         ]
         self._review_pages: list[str] = []  # the review pages written by this run
         self._process: subprocess.Popen | None = None
+        self._annotating = False  # the annotation of the header (taulu) is running
         self._aborted = False
         self._elapsed_timer: Timer | None = None
         self._active_stages: list[Stage] = []  # the module that is running, if any
@@ -286,6 +291,7 @@ class MeteoSaverApp(App):
     def compose(self) -> ComposeResult:
         ocr_model = self._setting("Transcription", "ocr_model", OCR_MODELS[0])
         row_grouping = self._setting("Transcription", "row_grouping", "kmeans")
+        detection_engine = self._setting("TableAndCellDetection", "cell_detection_engine", DETECTION_ENGINES[0])
 
         with Horizontal(id="body"):
             with Vertical(id="left-column"):
@@ -310,6 +316,17 @@ class MeteoSaverApp(App):
                                 stage.status = Label("PENDING", classes="stage-status status-pending")
                                 yield stage.status
                         yield Label("", id="progress")
+
+                    with Vertical(classes="panel"):
+                        yield Label("CELL DETECTION", classes="panel-title")
+                        yield Label("Engine (opencv: handwriting, taulu: ruled grid)")
+                        yield Select([(engine, engine) for engine in dict.fromkeys(DETECTION_ENGINES + [detection_engine])],
+                                     value=detection_engine, allow_blank=False, id="detection-engine-select")
+                        yield Label("taulu config (TOML)")
+                        yield ClipboardInput(value=self._setting("TableAndCellDetection", "taulu_config", "taulu/taulu.toml"), id="taulu-config-input")
+                        yield Label("Sheet to annotate the header on")
+                        yield ClipboardInput(placeholder="empty: the first sheet in IMAGES", id="taulu-sheet-input")
+                        yield Button("ANNOTATE HEADER", id="annotate-btn")
 
                     with Vertical(classes="panel"):
                         yield Label("OCR", classes="panel-title")
@@ -343,6 +360,7 @@ class MeteoSaverApp(App):
 
     def on_mount(self) -> None:
         self._update_glm_inputs()
+        self._update_detection_inputs()
         self.push_screen(BootSplashScreen(), self._after_splash)
 
     def _value(self, widget_id: str) -> str:
@@ -356,6 +374,10 @@ class MeteoSaverApp(App):
         self._log("=== SYSTEM CHECK ===", "header")
         self._log(f"Configuration file: {self.config_path}", "dim")
         self._check_images(self._path(self._value("images-input")))
+
+        if self.query_one("#detection-engine-select", Select).value == "taulu":
+            problem = self._taulu_config_problem(self._value("taulu-config-input"))
+            self._log(f"[ FAIL ]  taulu: {problem}" if problem else "[ OK ]  taulu config", "fail" if problem else "ok")
 
         ocr_model = self.query_one("#ocr-model-select", Select).value
         if ocr_model == "GLM-OCR":
@@ -393,6 +415,40 @@ class MeteoSaverApp(App):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "ocr-model-select":
             self._update_glm_inputs()
+        elif event.select.id == "detection-engine-select":
+            self._update_detection_inputs()
+
+    def _update_detection_inputs(self) -> None:
+        # The taulu configuration only applies to the taulu engine, and the row grouping only to the opencv engine
+        # (taulu detects the cells with their row and column)
+        uses_taulu = self.query_one("#detection-engine-select", Select).value == "taulu"
+        for widget_id in ("taulu-config-input", "taulu-sheet-input"):
+            self.query_one(f"#{widget_id}", Input).disabled = not uses_taulu
+        self.query_one("#annotate-btn", Button).disabled = not uses_taulu or self._annotating
+        self.query_one("#row-grouping-select", Select).disabled = uses_taulu
+
+    def _taulu_header_path(self, taulu_config: str) -> tuple[Path | None, str | None]:
+        """ The header image of the taulu configuration file (template_path, relative to the configuration file), or what is wrong with the file. """
+        config_path = self._path(taulu_config)
+        if not config_path.is_file():
+            return None, f"configuration file not found: {config_path}"
+        try:
+            with open(config_path, "rb") as f:
+                template_path = tomllib.load(f).get("template_path")
+        except tomllib.TOMLDecodeError as e:
+            return None, f"configuration file {config_path} cannot be read: {e}"
+        if not isinstance(template_path, str):
+            return None, f"no template_path (the header image) in {config_path}"
+        return config_path.parent / template_path, None
+
+    def _taulu_config_problem(self, taulu_config: str) -> str | None:
+        """ What is wrong with the taulu configuration file or its header, or None. """
+        header, problem = self._taulu_header_path(taulu_config)
+        if problem:
+            return problem
+        if not header.with_suffix(".png").is_file() or not header.with_suffix(".json").is_file():
+            return f"header image or its annotation not found: {header} (press ANNOTATE HEADER)"
+        return None
 
     def _update_glm_inputs(self) -> None:
         # The GLM-OCR settings only apply while GLM-OCR is the selected model
@@ -424,7 +480,15 @@ class MeteoSaverApp(App):
             ("Directories", "full_datadir"): images,
             ("Transcription", "ocr_model"): ocr_model,
             ("Transcription", "row_grouping"): self.query_one("#row-grouping-select", Select).value,
+            ("TableAndCellDetection", "cell_detection_engine"): self.query_one("#detection-engine-select", Select).value,
         }
+        if settings[("TableAndCellDetection", "cell_detection_engine")] == "taulu":
+            taulu_config = self._value("taulu-config-input")
+            problem = self._taulu_config_problem(taulu_config)
+            if (transcribing or reviewing) and problem:
+                self._log(f"[ FAIL ] taulu: {problem}", "fail")
+                return None
+            settings[("TableAndCellDetection", "taulu_config")] = taulu_config
         if os.path.normpath(results) != results_directory(self.config):
             settings.update(output_directories(self.config, results))
 
@@ -471,6 +535,8 @@ class MeteoSaverApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "run-btn":
             self._start_pipeline()
+        elif event.button.id == "annotate-btn":
+            self._start_annotation()
         elif event.button.id == "abort-btn":
             self._abort_pipeline()
 
@@ -484,6 +550,9 @@ class MeteoSaverApp(App):
     def _start_pipeline(self) -> None:
         if not any(stage.checkbox.value for stage in self.stages):
             self._log("[ FAIL ] No stage is enabled.", "fail")
+            return
+        if self._annotating:
+            self._log("[ FAIL ] The header is being annotated: finish or cancel the annotation first.", "fail")
             return
         settings = self._collect_settings()
         if settings is None:
@@ -513,6 +582,72 @@ class MeteoSaverApp(App):
         self.query_one("#run-btn", Button).disabled = True
         self.query_one("#abort-btn", Button).disabled = False
         self.run_worker(self._run_pipeline_worker, thread=True, exclusive=True, group="pipeline")
+
+    # -- annotation of the header (taulu) --
+
+    def _start_annotation(self) -> None:
+        if self._annotating:
+            return
+        if self._process is not None and self._process.poll() is None:
+            self._log("[ FAIL ] The pipeline is running: annotate the header when it is done.", "fail")
+            return
+        self._log("\n=== ANNOTATE HEADER ===", "header")
+        header, problem = self._taulu_header_path(self._value("taulu-config-input"))
+        if problem:
+            self._log(f"[ FAIL ] taulu: {problem}", "fail")
+            return
+        if not display_available():
+            self._log("[ FAIL ] The annotation opens a window, and there is no desktop session (DISPLAY) here. "
+                      "Run the dashboard from a terminal on the desktop, or annotate elsewhere with src/annotate_taulu_header.py.", "fail")
+            return
+
+        sheet_text = self._value("taulu-sheet-input")
+        if sheet_text:
+            sheet = self._path(sheet_text)
+            if not sheet.is_file():
+                self._log(f"[ FAIL ] Sheet not found: {sheet}", "fail")
+                return
+        else:
+            sheets_by_station, _messages = find_sheets(str(self._path(self._value("images-input"))))
+            first_sheets = [paths[0] for paths in sheets_by_station.values() if paths]
+            if not first_sheets:
+                self._log("[ FAIL ] No sheet to annotate: fill in a sheet, or IMAGES.", "fail")
+                return
+            sheet = Path(first_sheets[0])
+
+        self._annotating = True
+        self.query_one("#annotate-btn", Button).disabled = True
+        self._log(f"Sheet: {sheet}", "dim")
+        self._log(f"Header: {header.with_suffix('.png')} (the existing header is only replaced when the new one is saved)", "dim")
+        self._log("In the window: click the 4 corners of the header; then 2 clicks per ruled line (the lines above and below the header, "
+                  "and every vertical line). Right-click: undo. 'n': next / save, 'q': cancel.")
+        self.run_worker(lambda: self._annotation_worker(sheet, header), thread=True, group="annotate")
+
+    def _annotation_worker(self, sheet: Path, header: Path) -> None:
+        command = build_annotate_header_command(sheet, header)
+        self.call_from_thread(self._log, f"$ {' '.join(command)}", "dim")
+        returncode = 1
+        try:
+            process = subprocess.Popen(command, cwd=REPO_ROOT, env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in process.stdout:
+                if line.strip():
+                    self.call_from_thread(self._log, line.rstrip())
+            returncode = process.wait()
+        except OSError as e:
+            self.call_from_thread(self._log, f"[ FAIL ] Could not start the annotation: {e}", "fail")
+        self.call_from_thread(self._annotation_done, returncode)
+
+    def _annotation_done(self, returncode: int) -> None:
+        self._annotating = False
+        self._update_detection_inputs()
+        if returncode == 0:
+            problem = self._taulu_config_problem(self._value("taulu-config-input"))
+            self._log(f"[ FAIL ]  taulu: {problem}" if problem else "[ OK ]  Header annotated: the taulu engine is ready", "fail" if problem else "ok")
+        elif returncode == 2:
+            self._log("[ WARN ]  Header not annotated; the existing header (if any) is kept.", "warn")
+        else:
+            self._log(f"[ FAIL ]  The annotation stopped with an error (exit code {returncode}).", "fail")
 
     def _abort_pipeline(self) -> None:
         self._aborted = True

@@ -1,5 +1,6 @@
 """ Builds the pipeline subprocess command and checks what the dashboard needs before a run. """
 
+import os
 import re
 import shutil
 import signal
@@ -10,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAIN_SCRIPT = REPO_ROOT / "src" / "main.py"
+ANNOTATE_HEADER_SCRIPT = REPO_ROOT / "src" / "annotate_taulu_header.py"
 DEFAULT_CONFIG = REPO_ROOT / "configuration.ini"
 
 # Printed by main.py around each module (announce_stage) and for each sheet. Matched here by format
@@ -26,6 +28,19 @@ WARNING_PREFIX = "[ WARN ]"
 def build_pipeline_command(stages: list[str]) -> list[str]:
     """ One command for all given stages, so they share a process and the OCR model is loaded once. """
     return [sys.executable, "-u", str(MAIN_SCRIPT), "--stages", *stages]
+
+
+def build_annotate_header_command(image: Path, header: Path) -> list[str]:
+    """ Annotation of the header for the taulu cell detection engine. It opens its own (OpenCV) window, in a separate
+        process: taulu quits the program when the annotation is cancelled. """
+    return [sys.executable, "-u", str(ANNOTATE_HEADER_SCRIPT), str(image), str(header)]
+
+
+def display_available() -> bool:
+    """ Whether a window can be opened (for the annotation of the header). On Linux this needs a desktop session. """
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return True
 
 
 def parse_stage_marker(line: str) -> tuple[str, str] | None:
