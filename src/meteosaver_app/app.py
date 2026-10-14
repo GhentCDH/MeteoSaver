@@ -39,6 +39,18 @@ from meteosaver_app.theme import (
 OCR_MODELS = ["GLM-OCR", "Tesseract-OCR", "EasyOCR"]
 ROW_GROUPINGS = ["columnwise", "kmeans"]
 
+# The basic settings of the table and cell detection ([TableAndCellDetection] of the configuration file), in pairs side by side:
+# (label, key) per field. The other settings of the detection (e.g. the removal of the ruled lines) are only in the configuration file.
+DETECTION_FIELD_PAIRS = [
+    (("Clip top", "clip_up"), ("Clip bottom", "clip_down")),
+    (("Clip left", "clip_left"), ("Clip right", "clip_right")),
+    (("Max table width", "max_table_width"), ("Max table height", "max_table_height")),
+    (("Min cell width", "min_cell_width_threshold"), ("Min cell height", "min_cell_height_threshold")),
+    (("Max cell width", "max_cell_width_threshold"), ("Max cell height", "max_cell_height_threshold")),
+    (("Binarization block (odd)", "binarization_block_size"), ("Binarization offset", "binarization_offset")),
+]
+DETECTION_DEFAULTS = {"binarization_block_size": "51", "binarization_offset": "6"}  # for configuration files without these keys
+
 
 @dataclass
 class Stage:
@@ -100,6 +112,15 @@ class MeteoSaverApp(App):
         text-style: bold underline;
         color: {ACCENT};
         margin-bottom: 1;
+    }}
+
+    .field-pair {{
+        height: auto;
+    }}
+
+    .field {{
+        width: 1fr;
+        height: auto;
     }}
 
     .stage-row {{
@@ -312,6 +333,16 @@ class MeteoSaverApp(App):
                         yield Label("", id="progress")
 
                     with Vertical(classes="panel"):
+                        yield Label("TABLE DETECTION (pixels)", classes="panel-title")
+                        for pair in DETECTION_FIELD_PAIRS:
+                            with Horizontal(classes="field-pair"):
+                                for label, key in pair:
+                                    with Vertical(classes="field"):
+                                        yield Label(label)
+                                        yield ClipboardInput(value=self._setting("TableAndCellDetection", key, DETECTION_DEFAULTS.get(key, "")),
+                                                             id=f"detection-{key}-input")
+
+                    with Vertical(classes="panel"):
                         yield Label("OCR", classes="panel-title")
                         yield Label("OCR/HTR model")
                         yield Select([(model, model) for model in dict.fromkeys(OCR_MODELS + [ocr_model])],
@@ -443,6 +474,11 @@ class MeteoSaverApp(App):
             self._log("[ FAIL ] Tesseract-OCR is selected, but the tesseract program was not found.", "fail")
             return None
 
+        detection = self._collect_detection_settings()
+        if detection is None:
+            return None
+        settings.update(detection)
+
         for name, widget_id, key in (
             ("Maximum temperature", "max-temperature-input", "max_temperature_threshold"),
             ("Minimum temperature", "min-temperature-input", "min_temperature_threshold"),
@@ -459,6 +495,37 @@ class MeteoSaverApp(App):
             self._log("[ FAIL ] The minimum temperature must be below the maximum temperature.", "fail")
             return None
         return settings
+
+    def _collect_detection_settings(self) -> dict[tuple[str, str], str] | None:
+        """ The settings of the TABLE DETECTION panel. Logs what is wrong and returns None if they cannot be used. """
+        values = {}
+        for pair in DETECTION_FIELD_PAIRS:
+            for label, key in pair:
+                text = self._value(f"detection-{key}-input")
+                try:
+                    value = int(text)
+                except ValueError:
+                    self._log(f"[ FAIL ] {label} must be a whole number of pixels: {text}", "fail")
+                    return None
+                if value < 0 and key != "binarization_offset":
+                    self._log(f"[ FAIL ] {label} cannot be negative: {value}", "fail")
+                    return None
+                values[key] = value
+
+        if values["binarization_block_size"] < 3 or values["binarization_block_size"] % 2 == 0:
+            self._log(f"[ FAIL ] The binarization block must be an odd number of 3 or more: {values['binarization_block_size']}", "fail")
+            return None
+        for dimension in ("width", "height"):
+            if values[f"max_table_{dimension}"] == 0:
+                self._log(f"[ FAIL ] Max table {dimension} must be more than 0.", "fail")
+                return None
+            if values[f"min_cell_{dimension}_threshold"] >= values[f"max_cell_{dimension}_threshold"]:
+                self._log(f"[ FAIL ] Min cell {dimension} must be below max cell {dimension}.", "fail")
+                return None
+        if values["clip_up"] + values["clip_down"] >= values["max_table_height"] or values["clip_left"] + values["clip_right"] >= values["max_table_width"]:
+            self._log("[ FAIL ] The clips leave nothing of the table: together they must be smaller than the max table size.", "fail")
+            return None
+        return {("TableAndCellDetection", key): str(value) for key, value in values.items()}
 
     def _save_settings(self, settings: dict[tuple[str, str], str]) -> None:
         changes = write_values(self.config_path, settings)

@@ -3,7 +3,7 @@ import os, argparse, glob, tempfile, shutil, warnings
 import cv2
 import matplotlib.pyplot as plt
 
-def image_preprocessing(image_path):
+def image_preprocessing(image_path, binarization_block_size=51, binarization_offset=6):
     '''
     Performs image pre-processing by converting a colored image to grayscale and binarizing it by applying adaptive thresholding.
 
@@ -16,6 +16,13 @@ def image_preprocessing(image_path):
     --------------
     image_path : str
         The path to the original colored image file.
+
+    binarization_block_size : int
+        Size in pixels (odd) of the region around each pixel whose mean intensity is the threshold for that pixel.
+        Larger blocks follow the light differences across the sheet less closely; smaller blocks can break up thick or light handwriting.
+
+    binarization_offset : int
+        Constant subtracted from the mean intensity of the region. Higher values make fewer pixels black (less noise, but light text can disappear).
 
     Returns
     --------------
@@ -37,7 +44,7 @@ def image_preprocessing(image_path):
     #  The method calculates the threshold for small regions (91x91 block size) 
     # of the image using the mean of pixel intensities within that region. The threshold is then adjusted by subtracting 6. 
     # Pixels above the threshold are set to 255 (white), and those below are set to 0 (black).
-    binarized_image = cv2.adaptiveThreshold(image_in_grayscale, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 51,6)   # ahd it at (51,6) before   (35,6) was good but make some light text disappear. 
+    binarized_image = cv2.adaptiveThreshold(image_in_grayscale, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, binarization_block_size, binarization_offset)   # (51,6) by default (see configuration.ini).   (35,6) was good but make some light text disappear. 
 
    
     ## ONLY FOR VISUALIZATION PURPOSES - UNCOMMENT THE LINES BELOW 

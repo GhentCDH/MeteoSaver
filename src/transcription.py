@@ -635,7 +635,7 @@ def add_missing_boxes(sorted_rows, max_cell_width_threshold=130, max_cell_height
     updated_rows = []
 
     for row in sorted_rows:
-        if row == [None]:  # Skip padding rows
+        if len(row) == 1 and row[0] is None:  # Skip padding rows ([None]; not 'row == [None]', which compares a contour (numpy array) of a row with one cell to None)
             updated_rows.append(row)
             continue
 

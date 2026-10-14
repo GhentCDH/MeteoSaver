@@ -78,7 +78,9 @@ def announce_stage(stage, event):
 def detect_table_and_cells(month_data, month_filename, station):
     # Modules 2 and 3: image pre-processing, and table and cell detection of one sheet
     logger.info("Step 1: Preprocessing image")
-    image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
+    image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data,
+        binarization_block_size = int(config['TableAndCellDetection'].get('binarization_block_size', 51)),
+        binarization_offset = int(config['TableAndCellDetection'].get('binarization_offset', 6)))
 
     logger.info("Step 2: Detecting table and cells")
     return table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir,
@@ -96,7 +98,11 @@ def detect_table_and_cells(month_data, month_filename, station):
         space_width_threshold=int(config['TableAndCellDetection']['space_width_threshold']), 
         max_cell_height_per_box=int(config['TableAndCellDetection']['max_cell_height_per_box']), 
         no_of_rows=int(config['TableAndCellDetection']['no_of_rows']), 
-        no_of_columns=int(config['TableAndCellDetection']['no_of_columns']))
+        no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
+        line_kernel_divisor_vertical=int(config['TableAndCellDetection'].get('line_kernel_divisor_vertical', 50)),
+        line_kernel_divisor_horizontal=int(config['TableAndCellDetection'].get('line_kernel_divisor_horizontal', 60)),
+        line_dilation_iterations_vertical=int(config['TableAndCellDetection'].get('line_dilation_iterations_vertical', 5)),
+        line_dilation_iterations_horizontal=int(config['TableAndCellDetection'].get('line_dilation_iterations_horizontal', 5)))
 
 # Function to process each station's data
 def process_station(station):

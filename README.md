@@ -155,7 +155,7 @@ Instead of editing the configuration file by hand and running [main.py](src/main
 uv run python src/tui.py
 ```
 
-The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, clean-up, quality control, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
+The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, the basic settings of the table detection (clipping, table and cell sizes, binarization), OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, clean-up, quality control, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
 
 The selection of modules is also available without the dashboard, e.g. `uv run python src/main.py --stages qaqc formatting validation`.
 
