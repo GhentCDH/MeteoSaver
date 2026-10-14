@@ -106,6 +106,9 @@ def load_transcription(hoist_borders: bool):
         r" {28}for cell in row:\n"
         r" {32}cell\.border = thin_border\n")
     src, n = inner.subn("\n", src)
+    if n == 0:  # already hoisted in src/transcription.py: nothing to transform
+        import transcription as tr
+        return tr
     assert n == 1, f"expected exactly one per-cell border loop, found {n}"
     marker = "        # Insert two columns on the left side of the excel sheet\n"
     assert src.count(marker) == 1
