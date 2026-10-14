@@ -38,8 +38,9 @@ The sheets have rows of different heights: the days, and the taller Tot. and Moy
 To tune the parameters interactively:
 
 ```python
-from taulu import Taulu, TauluConfig
-taulu = Taulu.from_config(TauluConfig.from_toml("taulu/taulu.toml"))   # run from the taulu/ directory, or use absolute paths in the TOML
+import sys; sys.path.insert(0, "src")   # from the main project directory
+from taulu_cell_detection import get_taulu
+taulu = get_taulu("taulu/taulu.toml")    # paths in the TOML relative to the TOML; also makes AKAZE available with OpenCV 5
 taulu.segment_table("<image of a sheet>", debug_view=True)
 ```
 

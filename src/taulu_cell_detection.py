@@ -15,16 +15,36 @@ logger = logging.getLogger(__name__)
 _taulu_per_config = {}  # The Taulu instance per configuration file: the header template is only loaded once per process
 
 
-def _get_taulu(taulu_config):
+def patch_opencv_for_taulu():
+    '''
+    OpenCV 5 moved AKAZE (taulu's default feature_detector, to find the header) to the contrib module xfeatures2d, where taulu
+    does not look for it. Call this before using taulu directly (get_taulu does).
+    '''
+    if hasattr(cv2, 'AKAZE_create'):
+        return
+    akaze_create = getattr(getattr(cv2, 'xfeatures2d', None), 'AKAZE_create', None)
+    if akaze_create is None:
+        # Happens when another OpenCV package (opencv-python, opencv-python-headless) is installed next to opencv-contrib-python
+        # and has overwritten its files: they all install the same cv2 module
+        raise ImportError("OpenCV has no AKAZE (cv2.xfeatures2d.AKAZE_create), which taulu needs. Only opencv-contrib-python should be installed: "
+                          "run 'uv sync --reinstall-package opencv-contrib-python' (installed now: "
+                          f"{', '.join(_installed_opencv_packages()) or 'none found'}).")
+    cv2.AKAZE_create = akaze_create
+
+
+def _installed_opencv_packages():
+    from importlib.metadata import distributions
+    return sorted({d.metadata['Name'] for d in distributions() if (d.metadata['Name'] or '').lower().startswith('opencv')})
+
+
+def get_taulu(taulu_config):
     '''
     Returns the Taulu instance for a taulu configuration file (TOML, see taulu/taulu.toml in this repository).
     The paths in the configuration file (template_path, annotation_path) are relative to the directory of the configuration file.
     '''
     from taulu import Taulu, TauluConfig
 
-    # OpenCV 5 moved AKAZE (taulu's default feature_detector, to find the header) to the contrib module xfeatures2d
-    if not hasattr(cv2, 'AKAZE_create') and hasattr(cv2, 'xfeatures2d'):
-        cv2.AKAZE_create = cv2.xfeatures2d.AKAZE_create
+    patch_opencv_for_taulu()
 
     taulu_config = os.path.abspath(taulu_config)
     if taulu_config not in _taulu_per_config:
@@ -79,7 +99,7 @@ def taulu_table_and_cell_detection(binarized_image, original_image, station, mon
         None if no table with data was detected.
     '''
 
-    grid = _get_taulu(taulu_config).segment_table(original_image)
+    grid = get_taulu(taulu_config).segment_table(original_image)
     logger.info(f"taulu detected a grid of {grid.rows} rows and {grid.cols} columns")
 
     # The data part of the grid
