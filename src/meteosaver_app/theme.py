@@ -20,7 +20,7 @@ DONE = "#E6FFF2"  # not the usual green, which would not stand out against the g
 SKIPPED = scale(BASE, 0.40)
 FAILED = "#E88A8A"
 ABORTED = "#E0A96D"
-WARNING = "#FFFD01"
+WARNING = "#F3E8A6"  # pale, not the saturated yellow it was: easier on the eyes; still apart from RUNNING (#E8C97A)
 DIM = scale(BASE, 0.45)
 
 LEFT_COLUMN_WIDTH = 80  # wide enough for the two-line MeteoSaver logo next to the weather art inside its frame

@@ -32,6 +32,9 @@ config_file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'con
 config_file_path = os.environ.get('METEOSAVER_CONFIG', config_file_path) # Optionally, another configuration file can be selected with this environment variable
 config.read(config_file_path)
 
+# The fine-tuned GLM-OCR model on Hugging Face, used when glm_model is not set in the configuration file
+DEFAULT_GLM_MODEL = 'GhentCDH/GLM-OCR-MeteoSaver'
+
 # Get run_mode and number of processors from configuration file
 run_mode = config['General']['run_mode']
 num_processors = int(config['General'].get('num_processors', 1))
@@ -79,7 +82,9 @@ def announce_stage(stage, event):
 def detect_table_and_cells(month_data, month_filename, station):
     # Modules 2 and 3: image pre-processing, and table and cell detection of one sheet
     logger.info("Step 1: Preprocessing image")
-    image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data)
+    image_in_grayscale, binarized_image, original_image = image_preprocessing(month_data,
+        binarization_block_size = int(config['TableAndCellDetection'].get('binarization_block_size', 51)),
+        binarization_offset = int(config['TableAndCellDetection'].get('binarization_offset', 6)))
 
     # The cell detection engine: 'opencv' (detection of the handwritten text, see table_and_cell_detection_model.py) or 'taulu' (detection of the grid of the table, see taulu_cell_detection.py)
     cell_detection_engine = config['TableAndCellDetection'].get('cell_detection_engine', 'opencv')
@@ -107,7 +112,11 @@ def detect_table_and_cells(month_data, month_filename, station):
         space_width_threshold=int(config['TableAndCellDetection']['space_width_threshold']), 
         max_cell_height_per_box=int(config['TableAndCellDetection']['max_cell_height_per_box']), 
         no_of_rows=int(config['TableAndCellDetection']['no_of_rows']), 
-        no_of_columns=int(config['TableAndCellDetection']['no_of_columns']))
+        no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
+        line_kernel_divisor_vertical=int(config['TableAndCellDetection'].get('line_kernel_divisor_vertical', 50)),
+        line_kernel_divisor_horizontal=int(config['TableAndCellDetection'].get('line_kernel_divisor_horizontal', 60)),
+        line_dilation_iterations_vertical=int(config['TableAndCellDetection'].get('line_dilation_iterations_vertical', 5)),
+        line_dilation_iterations_horizontal=int(config['TableAndCellDetection'].get('line_dilation_iterations_horizontal', 5)))
 
 # Function to process each station's data
 def process_station(station):
@@ -160,9 +169,11 @@ def process_station(station):
                                                   no_of_columns=int(config['TableAndCellDetection']['no_of_columns']),
                                                   no_of_rows_including_headers=int(config['TableAndCellDetection']['no_of_rows_including_headers']),
                                                   row_grouping=config['Transcription'].get('row_grouping', 'kmeans'),
-                                                  glm_model_dir=config['Transcription'].get('glm_model_dir'),
+                                                  glm_model=config['Transcription'].get('glm_model', DEFAULT_GLM_MODEL),
                                                   glm_python=config['Transcription'].get('glm_python', ''),
                                                   glm_resize_height=int(config['Transcription'].get('glm_resize_height', 128)),
+                                                  ocr_side_enlarge=int(config['Transcription'].get('ocr_side_enlarge', OCR_SIDE_ENLARGE)),
+                                                  ocr_side_padding=int(config['Transcription'].get('ocr_side_padding', OCR_SIDE_PADDING)),
                                                   glm_batch_size=int(config['Transcription'].get('glm_batch_size', 64)),
                                                   glm_output_dir_station=os.path.join(glm_output_dir, station))
             
@@ -221,7 +232,7 @@ def process_station(station):
                         page_path = build_review_page(station, month_filename, detected_table_and_cells[3], glm_output_xlsx, post_QA_QC_xlsx,
                                                       os.path.join(review_dir, station, month_filename),
                                                       manual_xlsx=os.path.join(manually_transcribed_data_dir, station, f'{month_filename}_manually_entered_temperatures.xlsx'),
-                                                      model_note=f"GLM-OCR ({os.path.basename(os.path.dirname(os.path.normpath(config['Transcription'].get('glm_model_dir', ''))))}), {config['Transcription'].get('row_grouping', 'kmeans')} row grouping")
+                                                      model_note=f"GLM-OCR ({config['Transcription'].get('glm_model', DEFAULT_GLM_MODEL)}), {config['Transcription'].get('row_grouping', 'kmeans')} row grouping")
                         print(f"[review] page={os.path.abspath(page_path)}", flush=True)
                 except Exception as e:
                     logger.error(f"Error building the review page of {month_filename}: {e}", exc_info=True)

@@ -110,7 +110,10 @@ def deskew(image):
     Returns
     --------------
     deskewed_image : 
-        The deskewed image after rotation.
+        The deskewed image after rotation (the image itself if it is not skewed).
+
+    skew_angle : float
+        The detected skew angle in degrees (0 if the image is not skewed), to rotate other images of the same table in the same way.
     '''
 
     # Detect horizontal lines and calculate the average skew angle
@@ -120,7 +123,7 @@ def deskew(image):
     # If the detected angle is too small, no need to rotate
     if abs(hor_angle) < 0.1:
         print("[DEBUG] No significant skew detected. Returning original image ...")
-        return image
+        return image, 0.0
 
     # Get image dimensions
     (h, w) = image.shape[:2]
@@ -344,7 +347,8 @@ def remove_vertical_lines(image):
 
     return final_output
 
-def table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir, clip_up, clip_down, clip_left, clip_right, max_table_width, max_table_height, min_cell_width_threshold, min_cell_height_threshold, max_cell_width_threshold, max_cell_height_threshold, space_height_threshold, space_width_threshold, max_cell_height_per_box, no_of_rows, no_of_columns):
+def table_and_cell_detection(image_in_grayscale, binarized_image, original_image, station, month_filename, transient_transcription_output_dir, clip_up, clip_down, clip_left, clip_right, max_table_width, max_table_height, min_cell_width_threshold, min_cell_height_threshold, max_cell_width_threshold, max_cell_height_threshold, space_height_threshold, space_width_threshold, max_cell_height_per_box, no_of_rows, no_of_columns,
+                             line_kernel_divisor_vertical=50, line_kernel_divisor_horizontal=60, line_dilation_iterations_vertical=5, line_dilation_iterations_horizontal=5):
     '''
     Detects and extracts tables and cells from a grayscale image using a combination of OpenCV-based image processing techniques.
     
@@ -380,6 +384,13 @@ def table_and_cell_detection(image_in_grayscale, binarized_image, original_image
         Maximum height allowed for any single cell.
     no_of_rows, no_of_columns : int
         Expected number of rows and columns in the table, used for detecting and filling missing cells.
+
+    line_kernel_divisor_vertical, line_kernel_divisor_horizontal : int
+        The ruled lines of the table are found as strokes of at least (table width / divisor) pixels, and then removed so that only the
+        handwriting is left. A smaller divisor only finds longer lines (less handwriting mistaken for a line, but broken lines are missed).
+
+    line_dilation_iterations_vertical, line_dilation_iterations_horizontal : int
+        How much the detected lines are extended, which bridges the gaps in broken or dotted lines.
 
     Returns
     --------------
@@ -517,14 +528,16 @@ def table_and_cell_detection(image_in_grayscale, binarized_image, original_image
     img_bin = 255-table_img_bin
 
     # Detect the vertical lines in the image
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, np.array(table).shape[1]//50)) # The '//50' divides the length of the array (table) by 50, likely to obtain a fraction of the length for the structuring element,
+    # The kernel is a vertical line of (table width / line_kernel_divisor_vertical) pixels: only vertical strokes at least this long are kept as lines
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, np.array(table).shape[1]//line_kernel_divisor_vertical)))
     eroded_image = cv2.erode(img_bin, vertical_kernel, iterations=1)
-    vertical_lines = cv2.dilate(eroded_image, vertical_kernel, iterations=5)
+    vertical_lines = cv2.dilate(eroded_image, vertical_kernel, iterations=line_dilation_iterations_vertical)  # Dilation extends the detected lines, bridging the gaps in broken or dotted lines
 
     # Detect the horizontal lines in the image
-    hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (np.array(table).shape[1]//60, 1)) # The '//20' divides the width of the array (table) by 20, likely to obtain a fraction of the width for the structuring element.
+    # The kernel is a horizontal line of (table width / line_kernel_divisor_horizontal) pixels: only horizontal strokes at least this long are kept as lines
+    hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, np.array(table).shape[1]//line_kernel_divisor_horizontal), 1))
     eroded_image= cv2.erode(img_bin, hor_kernel, iterations=1)
-    horizontal_lines = cv2.dilate(eroded_image, hor_kernel, iterations=5)
+    horizontal_lines = cv2.dilate(eroded_image, hor_kernel, iterations=line_dilation_iterations_horizontal)
     
     # Blending the images with the vertical lines and the horizontal lines 
     combined_vertical_and_horizontal_lines = cv2.addWeighted(vertical_lines, 1, horizontal_lines, 1, 1)

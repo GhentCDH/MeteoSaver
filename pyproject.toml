@@ -27,6 +27,20 @@ dependencies = [
     "transformers>=5.3",
 ]
 
+[project.scripts]
+meteosaver = "tui:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Only what the dashboard imports is installed, as an editable install: src/ stays the live code.
+# The pipeline scripts (main.py and its modules) are still started by the dashboard from src/.
+# (hatchling rather than setuptools: the empty setup.py in the project root would otherwise be run instead of this file)
+[tool.hatch.build.targets.wheel]
+sources = ["src"]
+include = ["src/tui.py", "src/image_discovery.py", "src/meteosaver_app"]
+dev-mode-dirs = ["src"]
 [tool.uv]
 # The scripts in src/ are run directly; there is no package to build or install
 package = false

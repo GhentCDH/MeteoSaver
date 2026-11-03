@@ -635,7 +635,7 @@ def add_missing_boxes(sorted_rows, max_cell_width_threshold=130, max_cell_height
     updated_rows = []
 
     for row in sorted_rows:
-        if row == [None]:  # Skip padding rows
+        if len(row) == 1 and row[0] is None:  # Skip padding rows ([None]; not 'row == [None]', which compares a contour (numpy array) of a row with one cell to None)
             updated_rows.append(row)
             continue
 
@@ -768,6 +768,35 @@ def get_easyocr_reader():
     return _easyocr_reader
 
 
+# What an OCR/HTR model is given of a cell: its bounding box widened by OCR_SIDE_ENLARGE pixels on the left and on the right (real pixels of the
+# table image, so some of the neighbouring cells and lines come along), plus OCR_SIDE_PADDING pixels of background added on both sides
+# (settings ocr_side_enlarge and ocr_side_padding)
+OCR_SIDE_ENLARGE = 0
+OCR_SIDE_PADDING = 30
+
+def pad_sides(image, pixels):
+    '''
+    Returns the image with `pixels` columns of background added to its left and to its right, for the OCR/HTR models: digits that touch
+    the edge of a cell image are read worse. The background is the median colour of the image (most of it is paper, not ink).
+    The cell image itself, and the bounding box it was cut with, are not changed.
+    '''
+    if pixels <= 0 or image.size == 0:
+        return image
+    background = np.median(image.reshape(-1, 1 if image.ndim == 2 else image.shape[2]), axis=0)
+    value = background.tolist() if image.ndim == 3 else float(background[0])
+    return cv2.copyMakeBorder(image, 0, 0, pixels, pixels, cv2.BORDER_CONSTANT, value=value)
+
+def crop_for_ocr(table, box, enlarge, padding):
+    '''
+    Returns the image of a cell as it is given to an OCR/HTR model: the bounding box (x, y, w, h) widened by `enlarge` pixels on the left and
+    on the right (as far as the table image goes), with `padding` pixels of background added on both sides (see pad_sides).
+    The box itself, and the cell image saved for training, are not changed.
+    '''
+    x, y, w, h = box
+    left = max(0, x - enlarge)
+    right = min(table.shape[1], x + w + enlarge)
+    return pad_sides(table[y:y + h, left:right], padding)
+
 def expand_bounding_box(contour):
     '''
     Returns the bounding box (x, y, w, h) of a detected cell, enlarged so that the handwriting is not cut off at the cell borders.
@@ -795,19 +824,7 @@ def expand_bounding_box(contour):
     return x, y, w, h
 
 
-def grid_cell_box(contour, margin=4):
-    '''
-    Returns the bounding box (x, y, w, h) of a cell of the grid detected by taulu (see taulu_cell_detection.py), with a small margin.
-    Unlike the text detected by the default engine, these cells follow the ruled lines of the table, so they are not enlarged by expand_bounding_box
-    (that would take in the handwriting of the rows above and below).
-    '''
-    x, y, w, h = cv2.boundingRect(contour)
-    x = max(0, x - margin)
-    y = max(0, y - margin)
-    return x, y, w + 2 * margin, h + 2 * margin
-
-
-def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model_dir=None, glm_python='', glm_resize_height=128, glm_batch_size=64, glm_output_dir_station=None):
+def transcription(detected_table_cells, ocr_model, tesseract_path, transient_transcription_output_dir, pre_QA_QC_transcribed_hydroclimate_data_dir_station, station, month_filename, no_of_rows, no_of_columns, no_of_rows_including_headers, row_grouping='kmeans', glm_model=None, glm_python='', glm_resize_height=128, glm_batch_size=64, glm_output_dir_station=None, ocr_side_enlarge=OCR_SIDE_ENLARGE, ocr_side_padding=OCR_SIDE_PADDING):
     '''
     Performs OCR (Optical Character Recognition) on detected table cells from a pre-processed image 
     to extract and organize textual data into an Excel workbook.
@@ -856,9 +873,13 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     row_grouping : str
         How detected cells are grouped into rows: 'kmeans' (clustering of the top and midpoint coordinates) or 'columnwise' (see organize_contours_columnwise).
 
-    glm_model_dir, glm_python, glm_resize_height, glm_batch_size
+    glm_model, glm_python, glm_resize_height, glm_batch_size
         Settings for 'GLM-OCR' (see GlmOcrClient in glm_ocr_client.py). Only used if 'GLM-OCR' is the selected model.
 
+    ocr_side_enlarge : int
+        Pixels by which the bounding box of each cell is widened on the left and on the right before the OCR/HTR model reads it (real pixels of the table image).
+    ocr_side_padding : int
+        Pixels of background added to the left and to the right of that cell image (0 = none).
     glm_output_dir_station : str
         Directory for saving the text exactly as read by GLM-OCR (see save_glm_output). Only used if 'GLM-OCR' is the selected model.
 
@@ -878,7 +899,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
     #     paddle_ocr = PaddleOCR(use_angle_cls=True, lang = 'en', use_gpu=False) ## Run only once to download all required files
     if ocr_model == 'GLM-OCR':
         ## Lauching GLM-OCR (the model is loaded on the first sheet and kept in memory for the next ones)
-        glm_ocr_client = get_glm_ocr_client(glm_model_dir, glm_python, glm_resize_height, glm_batch_size)
+        glm_ocr_client = get_glm_ocr_client(glm_model, glm_python, glm_resize_height, glm_batch_size)
 
     # Contours of bounding boxes detected in cell recognition
     new_contours = detected_table_cells[0]
@@ -1039,7 +1060,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                     x, y, w, h = box
                     if box not in ocr_results and box not in boxes_to_read and table_copy[y:y+h, x:x+w].size != 0:
                         boxes_to_read.append(box)
-            glm_texts = glm_ocr_client.read([table_copy[y:y+h, x:x+w] for x, y, w, h in boxes_to_read])
+            glm_texts = glm_ocr_client.read([crop_for_ocr(table_copy, box, ocr_side_enlarge, ocr_side_padding) for box in boxes_to_read])
             glm_texts_per_box.update(zip(boxes_to_read, glm_texts))
             for box, glm_text in zip(boxes_to_read, glm_texts):
                 # Keep the digits only, as for the other OCR/HTR models: the decimal point is restored in the QA/QC module
@@ -1090,7 +1111,7 @@ def transcription(detected_table_cells, ocr_model, tesseract_path, transient_tra
                         save_dir =  os.path.join(transient_transcription_output_dir, station)
                         os.makedirs(save_dir, exist_ok=True)  # Ensure the directory exists
                         save_path_detected_text = os.path.join(save_dir, 'detected.png')
-                        cv2.imwrite(save_path_detected_text, ROI)
+                        cv2.imwrite(save_path_detected_text, crop_for_ocr(table_copy, (x, y, w, h), ocr_side_enlarge, ocr_side_padding))  # (the ROI saved for training below stays as cut)
                         if ocr_model == 'Tesseract-OCR':
                         # Using Tesseract-OCR
                             ocr_result = pytesseract.image_to_string(save_path_detected_text, lang='cobecore-V9_405', config='--oem 1 --psm 7 -c tessedit_char_whitelist=0123456789') # Just added -c tessedit_char_whitelist=0123456789 to really limit the text type/values detected

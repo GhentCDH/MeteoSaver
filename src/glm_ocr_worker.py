@@ -27,17 +27,18 @@ PROMPT = "Read the number in this image. Output only the text."
 THINK_PREFIX = "<think></think>\n"
 
 
-def load_model(model_dir):
+def load_model(model):
     '''
     Loads the GLM-OCR model and its processor, on the GPU if one is available.
+    model is a Hugging Face model ID: it is downloaded on first use, and then read from the Hugging Face cache.
     '''
-    processor = AutoProcessor.from_pretrained(model_dir)
+    processor = AutoProcessor.from_pretrained(model)
     if torch.cuda.is_available():
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        model = GlmOcrForConditionalGeneration.from_pretrained(model_dir, dtype=dtype).eval().cuda()
+        glm_model = GlmOcrForConditionalGeneration.from_pretrained(model, dtype=dtype).eval().cuda()
     else:
-        model = GlmOcrForConditionalGeneration.from_pretrained(model_dir).eval()
-    return model, processor
+        glm_model = GlmOcrForConditionalGeneration.from_pretrained(model).eval()
+    return glm_model, processor
 
 
 def clean_prediction(text):
@@ -72,7 +73,7 @@ def read_images(model, processor, images, batch_size, max_new_tokens=10):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True, help="Directory of the (fine-tuned) GLM-OCR model")
+    parser.add_argument("--model", required=True, help="Hugging Face model ID of the (fine-tuned) GLM-OCR model, e.g. GhentCDH/GLM-OCR-MeteoSaver")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--resize-height", type=int, default=128, help="Rescale the cell images to this height in pixels (0 = keep as is)")
     args = parser.parse_args()

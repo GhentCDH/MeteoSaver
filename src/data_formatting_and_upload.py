@@ -454,9 +454,9 @@ def plot_monthly_mean_temperatures(df, output_folder_path, station, station_name
 
     # Resample monthly means
     df = df.set_index("Date")
-    monthly_max = df["Max_Temperature"].resample("M").mean()
-    monthly_min = df["Min_Temperature"].resample("M").mean()
-    monthly_avg = df["Avg_Temperature"].resample("M").mean()
+    monthly_max = df["Max_Temperature"].resample("ME").mean()
+    monthly_min = df["Min_Temperature"].resample("ME").mean()
+    monthly_avg = df["Avg_Temperature"].resample("ME").mean()
 
     plt.figure(figsize=(12, 6))
     plt.plot(monthly_max.index, monthly_max.values, color="red", linewidth=1.5, label="Monthly Max Temp")
@@ -481,7 +481,7 @@ def plot_monthly_precipitation(df, output_folder_path, station, station_name):
     df = df.dropna(subset=["Precipitation"])
 
     # Resample to monthly sum
-    monthly_precip = df.set_index("Date")["Precipitation"].resample("M").sum()
+    monthly_precip = df.set_index("Date")["Precipitation"].resample("ME").sum()
 
     plt.figure(figsize=(12, 6))
     plt.plot(monthly_precip.index, monthly_precip.values, color="dodgerblue", linewidth=1.5, label="Monthly Precipitation")

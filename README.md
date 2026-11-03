@@ -106,6 +106,7 @@ To add or update a package, use `uv add <package>` or `uv lock --upgrade-package
 > [!NOTE]
 > Tesseract-OCR itself is not a Python package and has to be installed separately if you select it as OCR/HTR model (see the [configuration module](configuration.ini)).
 > GLM-OCR is installed with the environment (torch and transformers). A GPU is strongly recommended for it; on Linux, uv installs the CUDA version of torch.
+> The fine-tuned model, [GhentCDH/GLM-OCR-MeteoSaver](https://huggingface.co/GhentCDH/GLM-OCR-MeteoSaver) (`glm_model` in the configuration file), is downloaded from Hugging Face on first use (about 2.2 GB) and then read from the Hugging Face cache.
 
 ### Docker
 
@@ -155,7 +156,7 @@ Instead of editing the configuration file by hand and running [main.py](src/main
 uv run python src/tui.py
 ```
 
-The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, cell detection engine, OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, clean-up, quality control, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
+The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, the basic settings of the table detection (clipping, table and cell sizes, binarization), OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, clean-up, quality control, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
 
 The selection of modules is also available without the dashboard, e.g. `uv run python src/main.py --stages qaqc formatting validation`.
 

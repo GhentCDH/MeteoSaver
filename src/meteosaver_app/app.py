@@ -19,9 +19,12 @@ from meteosaver_app.clipboard import ClipboardInput
 from meteosaver_app.config_file import output_directories, read_config, results_directory, write_values
 from meteosaver_app.pipeline_runner import (
     ERROR_CONTINUATION,
+    DEFAULT_GLM_MODEL,
+    HF_MODEL_ID,
     REPO_ROOT,
     build_annotate_header_command,
     build_pipeline_command,
+    check_glm_model,
     check_gpu,
     classify_line,
     describe_exit,
@@ -41,7 +44,18 @@ from meteosaver_app.theme import (
 
 OCR_MODELS = ["GLM-OCR", "Tesseract-OCR", "EasyOCR"]
 ROW_GROUPINGS = ["columnwise", "kmeans"]
-DETECTION_ENGINES = ["opencv", "taulu"]
+
+# The basic settings of the table and cell detection ([TableAndCellDetection] of the configuration file), in pairs side by side:
+# (label, key) per field. The other settings of the detection (e.g. the removal of the ruled lines) are only in the configuration file.
+DETECTION_FIELD_PAIRS = [
+    (("Clip top", "clip_up"), ("Clip bottom", "clip_down")),
+    (("Clip left", "clip_left"), ("Clip right", "clip_right")),
+    (("Max table width", "max_table_width"), ("Max table height", "max_table_height")),
+    (("Min cell width", "min_cell_width_threshold"), ("Min cell height", "min_cell_height_threshold")),
+    (("Max cell width", "max_cell_width_threshold"), ("Max cell height", "max_cell_height_threshold")),
+    (("Binarization block (odd)", "binarization_block_size"), ("Binarization offset", "binarization_offset")),
+]
+DETECTION_DEFAULTS = {"binarization_block_size": "51", "binarization_offset": "6"}  # for configuration files without these keys
 
 
 @dataclass
@@ -104,6 +118,15 @@ class MeteoSaverApp(App):
         text-style: bold underline;
         color: {ACCENT};
         margin-bottom: 1;
+    }}
+
+    .field-pair {{
+        height: auto;
+    }}
+
+    .field {{
+        width: 1fr;
+        height: auto;
     }}
 
     .stage-row {{
@@ -318,15 +341,14 @@ class MeteoSaverApp(App):
                         yield Label("", id="progress")
 
                     with Vertical(classes="panel"):
-                        yield Label("CELL DETECTION", classes="panel-title")
-                        yield Label("Engine (opencv: handwriting, taulu: ruled grid)")
-                        yield Select([(engine, engine) for engine in dict.fromkeys(DETECTION_ENGINES + [detection_engine])],
-                                     value=detection_engine, allow_blank=False, id="detection-engine-select")
-                        yield Label("taulu config (TOML)")
-                        yield ClipboardInput(value=self._setting("TableAndCellDetection", "taulu_config", "taulu/taulu.toml"), id="taulu-config-input")
-                        yield Label("Sheet to annotate the header on")
-                        yield ClipboardInput(placeholder="empty: the first sheet in IMAGES", id="taulu-sheet-input")
-                        yield Button("ANNOTATE HEADER", id="annotate-btn")
+                        yield Label("TABLE DETECTION (pixels)", classes="panel-title")
+                        for pair in DETECTION_FIELD_PAIRS:
+                            with Horizontal(classes="field-pair"):
+                                for label, key in pair:
+                                    with Vertical(classes="field"):
+                                        yield Label(label)
+                                        yield ClipboardInput(value=self._setting("TableAndCellDetection", key, DETECTION_DEFAULTS.get(key, "")),
+                                                             id=f"detection-{key}-input")
 
                     with Vertical(classes="panel"):
                         yield Label("OCR", classes="panel-title")
@@ -336,8 +358,8 @@ class MeteoSaverApp(App):
                         yield Label("Row grouping")
                         yield Select([(grouping, grouping) for grouping in dict.fromkeys(ROW_GROUPINGS + [row_grouping])],
                                      value=row_grouping, allow_blank=False, id="row-grouping-select")
-                        yield Label("GLM-OCR model dir")
-                        yield ClipboardInput(value=self._setting("Transcription", "glm_model_dir"), id="glm-model-input")
+                        yield Label("GLM-OCR model (Hugging Face ID)")
+                        yield ClipboardInput(value=self._setting("Transcription", "glm_model", DEFAULT_GLM_MODEL), id="glm-model-input")
                         yield Label("GLM-OCR batch size")
                         yield ClipboardInput(value=self._setting("Transcription", "glm_batch_size", "64"), id="glm-batch-input")
 
@@ -381,7 +403,8 @@ class MeteoSaverApp(App):
 
         ocr_model = self.query_one("#ocr-model-select", Select).value
         if ocr_model == "GLM-OCR":
-            self._log_check("GLM-OCR model", self._path(self._value("glm-model-input")).is_dir())
+            glm_model = self._value("glm-model-input")
+            self.run_worker(lambda: self._startup_glm_model_check(glm_model), thread=True, group="glm-model-check")
             self.run_worker(self._startup_gpu_check, thread=True, group="gpu-check")
         elif ocr_model == "Tesseract-OCR":
             self._log_check("Tesseract", tesseract_available())
@@ -400,6 +423,10 @@ class MeteoSaverApp(App):
             return False
         self._log(f"[ OK ]  Images: {sheets} sheets in {len(sheets_by_station)} stations ({', '.join(sheets_by_station)})", "ok")
         return True
+
+    def _startup_glm_model_check(self, glm_model: str) -> None:
+        ok, detail = check_glm_model(glm_model)
+        self.call_from_thread(self._log, f"[ {'OK' if ok else 'WARN'} ]  GLM-OCR model: {detail}", "ok" if ok else "warn")
 
     def _startup_gpu_check(self) -> None:
         ok, detail = check_gpu()
@@ -493,19 +520,24 @@ class MeteoSaverApp(App):
             settings.update(output_directories(self.config, results))
 
         if ocr_model == "GLM-OCR":
-            model_dir = self._value("glm-model-input")
+            glm_model = self._value("glm-model-input")
             batch_size = self._value("glm-batch-input")
-            if transcribing and not self._path(model_dir).is_dir():
-                self._log(f"[ FAIL ] GLM-OCR model dir not found: {self._path(model_dir)}", "fail")
+            if not HF_MODEL_ID.fullmatch(glm_model):
+                self._log(f"[ FAIL ] The GLM-OCR model must be a Hugging Face model ID like {DEFAULT_GLM_MODEL}: {glm_model or '(empty)'}", "fail")
                 return None
             if not (batch_size.isdigit() and int(batch_size) > 0):
                 self._log(f"[ FAIL ] GLM-OCR batch size must be a positive number: {batch_size}", "fail")
                 return None
-            settings[("Transcription", "glm_model_dir")] = model_dir
+            settings[("Transcription", "glm_model")] = glm_model
             settings[("Transcription", "glm_batch_size")] = batch_size
         elif ocr_model == "Tesseract-OCR" and transcribing and not tesseract_available():
             self._log("[ FAIL ] Tesseract-OCR is selected, but the tesseract program was not found.", "fail")
             return None
+
+        detection = self._collect_detection_settings()
+        if detection is None:
+            return None
+        settings.update(detection)
 
         for name, widget_id, key in (
             ("Maximum temperature", "max-temperature-input", "max_temperature_threshold"),
@@ -523,6 +555,37 @@ class MeteoSaverApp(App):
             self._log("[ FAIL ] The minimum temperature must be below the maximum temperature.", "fail")
             return None
         return settings
+
+    def _collect_detection_settings(self) -> dict[tuple[str, str], str] | None:
+        """ The settings of the TABLE DETECTION panel. Logs what is wrong and returns None if they cannot be used. """
+        values = {}
+        for pair in DETECTION_FIELD_PAIRS:
+            for label, key in pair:
+                text = self._value(f"detection-{key}-input")
+                try:
+                    value = int(text)
+                except ValueError:
+                    self._log(f"[ FAIL ] {label} must be a whole number of pixels: {text}", "fail")
+                    return None
+                if value < 0 and key != "binarization_offset":
+                    self._log(f"[ FAIL ] {label} cannot be negative: {value}", "fail")
+                    return None
+                values[key] = value
+
+        if values["binarization_block_size"] < 3 or values["binarization_block_size"] % 2 == 0:
+            self._log(f"[ FAIL ] The binarization block must be an odd number of 3 or more: {values['binarization_block_size']}", "fail")
+            return None
+        for dimension in ("width", "height"):
+            if values[f"max_table_{dimension}"] == 0:
+                self._log(f"[ FAIL ] Max table {dimension} must be more than 0.", "fail")
+                return None
+            if values[f"min_cell_{dimension}_threshold"] >= values[f"max_cell_{dimension}_threshold"]:
+                self._log(f"[ FAIL ] Min cell {dimension} must be below max cell {dimension}.", "fail")
+                return None
+        if values["clip_up"] + values["clip_down"] >= values["max_table_height"] or values["clip_left"] + values["clip_right"] >= values["max_table_width"]:
+            self._log("[ FAIL ] The clips leave nothing of the table: together they must be smaller than the max table size.", "fail")
+            return None
+        return {("TableAndCellDetection", key): str(value) for key, value in values.items()}
 
     def _save_settings(self, settings: dict[tuple[str, str], str]) -> None:
         changes = write_values(self.config_path, settings)
