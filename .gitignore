@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 
 results_new/
+experiments/glm_ocr/ocr_only_results_columnwise.csv

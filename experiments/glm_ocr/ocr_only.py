@@ -6,10 +6,11 @@ Every engine sees the same crop for the same manually transcribed cell (cols Max
 Score: digits-only match against the manual value in tenths ('17' accepted for 17.0), and CER on digits.
 
 Run with .venv-easyocr/bin/python (spawns the GLM worker under .venv-glm).
-Writes ocr_only_results.csv (per cell, per system) and prints the summary.
+Writes ocr_only_results.csv (per cell, per system; _columnwise suffix with --row-grouping columnwise) and prints the summary.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -48,9 +49,16 @@ def effective(pred: str, truth: str) -> str:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--row-grouping", choices=["kmeans", "columnwise"], default="kmeans", help="which extract_rois.py output to read; columnwise writes ocr_only_results_columnwise.csv")
+    args = ap.parse_args()
+    suffix = "" if args.row_grouping == "kmeans" else f"_{args.row_grouping}"
     import easyocr
     reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-    glm = cs.GlmClient(str(cs.HERE / "runs/full/merged"), 0)
+    # one worker per GLM-OCR checkpoint; "full" is the fine-tune used so far, the others are the ladder from train.py / evaluate.py
+    checkpoints = {"zeroshot": "zai-org/GLM-OCR", "n500": cs.HERE / "runs/n500/merged", "n2000": cs.HERE / "runs/n2000/merged",
+                   "n8000": cs.HERE / "runs/n8000/merged", "full": cs.HERE / "runs/full/merged"}
+    glms = {name: cs.GlmClient(str(path), 0) for name, path in checkpoints.items()}
     tmp = Path(tempfile.mkdtemp())
 
     def variant(path: Path, rescale: bool, pad: int = 0) -> str:
@@ -73,10 +81,11 @@ def main() -> None:
         "tess_V6 padded | orig": ("tessV6pad", "orig", False),
         "easyocr | bin": ("easy", "bin", False),
         "easyocr | orig": ("easy", "orig", False),
-        "GLM full | bin": ("glm", "bin", False),
-        "GLM full | bin +128": ("glm", "bin", True),
-        "GLM full | orig": ("glm", "orig", False),
-        "GLM full | orig +128": ("glm", "orig", True),
+        "GLM full | bin": ("glm:full", "bin", False),
+        "GLM full | bin +128": ("glm:full", "bin", True),
+        "GLM full | orig": ("glm:full", "orig", False),
+        "GLM full | orig +128": ("glm:full", "orig", True),
+        **{f"GLM {name} | orig +128": (f"glm:{name}", "orig", True) for name in checkpoints if name != "full"},
     }
 
     def run(engine: str, p: str) -> str:
@@ -88,13 +97,13 @@ def main() -> None:
             return tesseract(variant(Path(p), False, 20), "cobecore-V6")
         if engine == "easy":
             return "".join(reader.readtext(p, detail=0, allowlist="0123456789"))
-        return glm(p)
+        return glms[engine.split(":")[1]](p)
 
     rows_out = []
     per = defaultdict(lambda: defaultdict(lambda: [0, 0, 0, 0]))  # system -> sheet -> [n, exact, edits, chars]
     for xlsx in sorted(MANUAL.glob("*/*_manually_entered_temperatures.xlsx")):
         f = xlsx.name.split("_manually")[0]
-        root = cs.HERE / "sheet_runs" / f / "rois"
+        root = cs.HERE / "sheet_runs" / f / f"rois{suffix}"
         if not (root / "cells.json").exists():
             print("missing ROIs for", f)
             continue
@@ -118,9 +127,10 @@ def main() -> None:
                     s[0] += 1; s[1] += eff == truth; s[2] += edit_distance(truth, eff); s[3] += len(truth)
                 rows_out.append(row)
         print(f"{f}: {sum(1 for x in rows_out if x['sheet'] == f)} cells", flush=True)
-    glm.close()
+    for g in glms.values():
+        g.close()
 
-    with open(cs.HERE / "ocr_only_results.csv", "w", newline="", encoding="utf-8") as fh:
+    with open(cs.HERE / f"ocr_only_results{suffix}.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows_out[0]))
         w.writeheader(); w.writerows(rows_out)
 

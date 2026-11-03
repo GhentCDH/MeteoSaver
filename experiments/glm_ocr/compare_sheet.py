@@ -172,6 +172,7 @@ def run_pipeline(label: str, args, cfg, patch_ocr=None, roi_source: str = "binar
             detected, "Tesseract-OCR", "tesseract", str(transient), str(pre_qaqc), args.station, args.file,
             no_of_rows=int(t["no_of_rows"]), no_of_columns=int(t["no_of_columns"]),
             no_of_rows_including_headers=int(t["no_of_rows_including_headers"]),
+            ocr_side_enlarge=0, ocr_side_padding=0,  # raw ROI as cut; src/ now pads every OCR crop by default, which these experiments predate
         )
     finally:
         pytesseract.image_to_string = original

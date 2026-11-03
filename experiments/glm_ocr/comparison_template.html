@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesseract vs GLM-OCR</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#65707c;--line:#dde1e6;--a:#2a6fdb;--b:#d9730d;--ok:#1c7c3c;--bad:#c0262d;--okbg:#e5f4ea;--badbg:#fbe9ea}
+@media (prefers-color-scheme:dark){:root{--bg:#14171a;--panel:#1d2126;--ink:#e6e9ec;--mute:#98a2ad;--line:#2f353c;--a:#6ea3ff;--b:#f0a04b;--ok:#5fd18a;--bad:#ff7b81;--okbg:#17321f;--badbg:#3a1d20}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif}
+header{background:var(--panel);border-bottom:1px solid var(--line);padding:12px 16px;position:sticky;top:0;z-index:5}
+h1{font-size:17px;margin:0 0 8px}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:2px;min-width:0}
+select,input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;max-width:100%}
+.a{color:var(--a)}.b{color:var(--b)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+nav{display:flex;gap:4px;margin-top:10px}
+nav button{font:inherit;color:var(--mute);background:none;border:0;border-bottom:2px solid transparent;padding:6px 12px;cursor:pointer}
+nav button.on{color:var(--ink);border-color:var(--ink);font-weight:600}
+main{padding:16px;max-width:1300px;margin:0 auto}
+.note{color:var(--mute);font-size:12.5px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:5px}
+.card img{width:100%;height:96px;object-fit:contain;background:#fff;border-radius:4px;image-rendering:auto}
+.card .st{font-size:11px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv{display:flex;justify-content:space-between;gap:6px;align-items:center;padding:2px 6px;border-radius:4px;font-family:ui-monospace,monospace}
+.kv small{font:11px system-ui;color:var(--mute)}
+.kv.ok{background:var(--okbg);color:var(--ok)}.kv.bad{background:var(--badbg);color:var(--bad)}.kv.gt{background:var(--bg);color:var(--ink)}
+.pager{display:flex;gap:8px;align-items:center;margin:12px 0}
+button.btn{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button.btn:disabled{opacity:.4;cursor:default}
+section.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:16px}
+h2{font-size:15px;margin:0 0 4px}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;vertical-align:middle}
+th{font-size:12px;color:var(--mute);font-weight:600}
+td.n,th.n{text-align:right}
+tr.sel-a td:first-child{box-shadow:inset 3px 0 var(--a)}tr.sel-b td:first-child{box-shadow:inset 3px 0 var(--b)}
+.bar{height:10px;border-radius:3px;background:var(--mute);min-width:1px}
+.bar.tess{background:var(--a)}.bar.glm{background:var(--b)}.bar.easy{background:var(--mute)}
+.bwrap{display:flex;align-items:center;gap:6px;min-width:140px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.tile b{font-size:22px;display:block}.tile span{font-size:12px;color:var(--mute)}
+.mono{font-family:ui-monospace,monospace}
+.hidden{display:none}
+.grp{display:grid;grid-template-columns:90px 1fr;gap:4px 8px;align-items:center;margin-top:6px}
+.grp .bars{display:flex;flex-direction:column;gap:2px}
+.grp .bar{height:9px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Tesseract vs GLM-OCR</h1>
+  <div class="row" id="shSel">
+    <label><span><i class="dot" style="background:var(--a)"></i>System A (baseline)</span><select id="shA"></select></label>
+    <label><span><i class="dot" style="background:var(--b)"></i>System B</span><select id="shB"></select></label>
+  </div>
+  <nav><button data-tab="sheets" class="on">Manual sheets</button><button data-tab="stats">Statistics (manual sheets)</button><button data-tab="cmp">Labelled crops</button></nav>
+</header>
+<main>
+<div id="tab-cmp" class="hidden">
+  <div class="row" style="margin-bottom:8px">
+    <label><span><i class="dot" style="background:var(--a)"></i>System A (baseline)</span><select id="selA"></select></label>
+    <label><span><i class="dot" style="background:var(--b)"></i>System B</span><select id="selB"></select></label>
+  </div>
+  <p class="note">Held-out test split of the labelled crops (<span id="nCells"></span>). Labels use a decimal comma. A cell is "right" when the prediction equals the label exactly.</p>
+  <div class="row" style="margin-bottom:8px">
+    <label>Outcome<select id="fOut">
+      <option value="all">All cells</option><option value="bOnly">Only B right</option><option value="aOnly">Only A right</option>
+      <option value="neither">Both wrong</option><option value="both">Both right</option><option value="differ">A and B disagree</option></select></label>
+    <label>Label type<select id="fType"><option value="all">All</option><option value="dec">With decimal comma</option><option value="int">Integers</option></select></label>
+    <label>Label length<select id="fLen"><option value="all">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option value="5">5+</option></select></label>
+    <label>Label contains<input id="fText" placeholder="e.g. 27,2" size="10"></label>
+    <span id="count" class="note" style="margin:0 0 0 auto"></span>
+  </div>
+  <div id="grid" class="grid"></div>
+  <div class="pager"><button class="btn" id="prev">Prev</button><span id="page"></span><button class="btn" id="next">Next</button></div>
+</div>
+<div id="tab-sheets">
+  <p class="note">Cells from the manually transcribed sheets (max / min / mean temperature columns), cut from the original colour scan by MeteoSaver's table detection; every engine reads the same box. Values are in tenths of a degree ("287" = 28.7). A reading is right when its digits equal the manual value, or equal it once a trailing 0 is added ("17" for 17.0).</p>
+  <div class="row" style="margin-bottom:8px">
+    <label>Sheet<select id="shSheet"></select></label>
+    <label>Outcome<select id="shOut"><option value="all">All cells</option><option value="bOnly">Only B right</option><option value="aOnly">Only A right</option><option value="neither">Both wrong</option><option value="both">Both right</option></select></label>
+    <span id="shCount" class="note" style="margin:0 0 0 auto"></span>
+  </div>
+  <div id="shGrid" class="grid"></div>
+  <div class="pager"><button class="btn" id="shPrev">Prev</button><span id="shPage"></span><button class="btn" id="shNext">Next</button></div>
+</div>
+<div id="tab-stats" class="hidden"></div>
+</main>
+<script>
+const D = /*DATA*/null;
+const N = D.gt.length, PAGE = 60;
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = x => (100 * x).toFixed(1) + '%';
+const sysById = Object.fromEntries(D.systems.map(s => [s.id, s]));
+
+function ed(a, b) {
+  let prev = Array.from({length: b.length + 1}, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur.push(Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] !== b[j-1])));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+const right = {};
+for (const s of D.systems) {
+  right[s.id] = D.gt.map((g, i) => D.pred[s.id][i] === g);
+}
+// ---- selectors
+const selA = $('#selA'), selB = $('#selB');
+for (const s of D.systems) for (const sel of [selA, selB]) sel.add(new Option(s.label, s.id));
+selA.value = D.systems.some(s => s.id === 'tess_V6_punct_pad') ? 'tess_V6_punct_pad' : D.systems[0].id;
+selB.value = D.systems.some(s => s.id === 'full') ? 'full' : D.systems[D.systems.length - 1].id;
+$('#nCells').textContent = N.toLocaleString() + ' cells';
+
+// ---- tabs
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  $('#tab-cmp').classList.toggle('hidden', b.dataset.tab !== 'cmp');
+  $('#tab-sheets').classList.toggle('hidden', b.dataset.tab !== 'sheets');
+  $('#shSel').classList.toggle('hidden', b.dataset.tab === 'cmp');
+  if (b.dataset.tab === 'sheets') renderSheets(true);
+  $('#tab-stats').classList.toggle('hidden', b.dataset.tab !== 'stats');
+  if (b.dataset.tab === 'stats') renderStats();
+});
+
+// ---- compare tab
+let page = 0, shown = [];
+function filtered() {
+  const A = selA.value, B = selB.value, out = $('#fOut').value, ty = $('#fType').value, ln = $('#fLen').value, tx = $('#fText').value.trim();
+  const ra = right[A], rb = right[B], pa = D.pred[A], pb = D.pred[B], res = [];
+  for (let i = 0; i < N; i++) {
+    const g = D.gt[i];
+    if (ty === 'dec' && !g.includes(',')) continue;
+    if (ty === 'int' && g.includes(',')) continue;
+    if (ln !== 'all' && (ln === '5' ? g.length < 5 : g.length !== +ln)) continue;
+    if (tx && !g.includes(tx)) continue;
+    if (out === 'bOnly' && !(rb[i] && !ra[i])) continue;
+    if (out === 'aOnly' && !(ra[i] && !rb[i])) continue;
+    if (out === 'neither' && (ra[i] || rb[i])) continue;
+    if (out === 'both' && !(ra[i] && rb[i])) continue;
+    if (out === 'differ' && pa[i] === pb[i]) continue;
+    res.push(i);
+  }
+  return res;
+}
+const show = v => v === '' ? '∅' : esc(v);
+function renderCmp(resetPage) {
+  if (resetPage) { page = 0; shown = filtered(); }
+  const A = selA.value, B = selB.value, pages = Math.max(1, Math.ceil(shown.length / PAGE));
+  page = Math.min(page, pages - 1);
+  $('#count').textContent = shown.length.toLocaleString() + ' of ' + N.toLocaleString() + ' cells';
+  $('#grid').innerHTML = shown.slice(page * PAGE, (page + 1) * PAGE).map(i => `
+    <div class="card"><img loading="lazy" alt="" src="data:image/webp;base64,${D.img[i]}">
+      <div class="st">${esc(D.stems[i])}</div>
+      <div class="kv gt"><small>label</small>${show(D.gt[i])}</div>
+      <div class="kv ${right[A][i] ? 'ok' : 'bad'}"><small class="a">A</small>${show(D.pred[A][i])}</div>
+      <div class="kv ${right[B][i] ? 'ok' : 'bad'}"><small class="b">B</small>${show(D.pred[B][i])}</div></div>`).join('');
+  $('#page').textContent = `Page ${page + 1} / ${pages}`;
+  $('#prev').disabled = page === 0; $('#next').disabled = page >= pages - 1;
+}
+$('#prev').onclick = () => { page--; renderCmp(); scrollTo(0, 0); };
+$('#next').onclick = () => { page++; renderCmp(); scrollTo(0, 0); };
+for (const id of ['#fOut', '#fType', '#fLen', '#fText', '#selA', '#selB']) $(id).addEventListener('input', () => renderCmp(true));
+
+// ---- manual sheets tab
+const SH = D.sheet, SN = SH.truth.length;
+const shRight = {};
+for (const s of SH.systems) shRight[s.id] = SH.truth.map((t, i) => { const d = SH.pred[s.id][i].replace(/\D/g, ''); return d === t || d + '0' === t; });
+const shA = $('#shA'), shB = $('#shB'), shSheet = $('#shSheet');
+for (const s of SH.systems) for (const sel of [shA, shB]) sel.add(new Option(s.label, s.id));
+shA.value = SH.systems.find(s => s.id.includes('production'))?.id ?? SH.systems[0].id;
+shB.value = SH.systems.find(s => s.id === 'GLM full | orig +128')?.id ?? SH.systems.at(-1).id;
+shSheet.add(new Option('All sheets', 'all'));
+for (const f of [...new Set(SH.sheets)].sort()) shSheet.add(new Option(f, f));
+let shPage = 0, shShown = [];
+function renderSheets(reset) {
+  const A = shA.value, B = shB.value;
+  if (reset) {
+    shPage = 0; const out = $('#shOut').value, sh = shSheet.value; shShown = [];
+    for (let i = 0; i < SN; i++) {
+      const a = shRight[A][i], b = shRight[B][i];
+      if (sh !== 'all' && SH.sheets[i] !== sh) continue;
+      if (out === 'bOnly' && !(b && !a)) continue; if (out === 'aOnly' && !(a && !b)) continue;
+      if (out === 'neither' && (a || b)) continue; if (out === 'both' && !(a && b)) continue;
+      shShown.push(i);
+    }
+  }
+  const pages = Math.max(1, Math.ceil(shShown.length / PAGE)); shPage = Math.min(shPage, pages - 1);
+  const ok = id => shShown.filter(i => shRight[id][i]).length;
+  $('#shCount').innerHTML = `${shShown.length.toLocaleString()} of ${SN.toLocaleString()} cells &middot; <b class="a">A ${shShown.length ? pct(ok(A) / shShown.length) : '-'}</b> &middot; <b class="b">B ${shShown.length ? pct(ok(B) / shShown.length) : '-'}</b>`;
+  $('#shGrid').innerHTML = shShown.slice(shPage * PAGE, (shPage + 1) * PAGE).map(i => `
+    <div class="card"><img loading="lazy" alt="" src="data:image/webp;base64,${SH.img[i]}">
+      <div class="st">${esc(SH.sheets[i])} &middot; r${SH.rc[i][0]} c${SH.rc[i][1]}</div>
+      <div class="kv gt"><small>manual</small>${esc(SH.truth[i])}</div>
+      <div class="kv ${shRight[A][i] ? 'ok' : 'bad'}"><small class="a">A</small>${show(SH.pred[A][i])}</div>
+      <div class="kv ${shRight[B][i] ? 'ok' : 'bad'}"><small class="b">B</small>${show(SH.pred[B][i])}</div></div>`).join('');
+  $('#shPage').textContent = `Page ${shPage + 1} / ${pages}`;
+  $('#shPrev').disabled = shPage === 0; $('#shNext').disabled = shPage >= pages - 1;
+}
+$('#shPrev').onclick = () => { shPage--; renderSheets(); scrollTo(0, 0); };
+$('#shNext').onclick = () => { shPage++; renderSheets(); scrollTo(0, 0); };
+for (const el of [shA, shB, shSheet, $('#shOut')]) el.addEventListener('input', () => { renderSheets(true); if (!$('#tab-stats').classList.contains('hidden')) renderStats(); });
+
+// ---- statistics tab (manual sheets only)
+const barRow = (v, fam, text) => `<div class="bwrap"><div class="bar ${fam}" style="width:${Math.max(0, v) * 100}%;max-width:100%"></div><span>${text}</span></div>`;
+const shEff = (id, i) => { const d = SH.pred[id][i].replace(/\D/g, ''); return d + '0' === SH.truth[i] ? d + '0' : d; };
+const shDist = {};
+for (const s of SH.systems) shDist[s.id] = SH.truth.map((t, i) => ed(t, shEff(s.id, i)));
+function shMetrics(id, idx) {
+  let ok = 0, empty = 0, edits = 0, chars = 0;
+  for (const i of idx) { ok += shRight[id][i]; empty += SH.pred[id][i] === ''; edits += shDist[id][i]; chars += SH.truth[i].length; }
+  return {exact: ok / idx.length, cer: chars ? edits / chars : 0, empty: empty / idx.length};
+}
+function shErr(id, i) {
+  if (shRight[id][i]) return null;
+  const t = SH.truth[i], d = shEff(id, i);
+  if (d === '') return 'Empty output';
+  if (d.length > t.length) return 'Extra digits';
+  if (d.length < t.length) return 'Missing digits';
+  if (d.length === t.length && d.length >= 3 && d.slice(0, -1) === t.slice(0, -1)) return 'Only last digit wrong';
+  return 'Substituted digits';
+}
+function shConf(id, k = 12) {
+  const c = new Map();
+  for (let i = 0; i < SN; i++) if (!shRight[id][i]) { const key = SH.truth[i] + '→' + shEff(id, i); c.set(key, (c.get(key) || 0) + 1); }
+  return [...c].sort((x, y) => y[1] - x[1]).slice(0, k);
+}
+function renderStats() {
+  const A = shA.value, B = shB.value, all = [...Array(SN).keys()];
+  const ra = shRight[A], rb = shRight[B];
+  let both = 0, aOnly = 0, bOnly = 0, none = 0;
+  for (const i of all) { if (ra[i] && rb[i]) both++; else if (ra[i]) aOnly++; else if (rb[i]) bOnly++; else none++; }
+  const nd = aOnly + bOnly, z = nd ? (Math.abs(aOnly - bOnly) - 1) / Math.sqrt(nd) : 0;
+  const sig = z > 3.29 ? 'p < 0.001' : z > 1.96 ? 'p < 0.05' : 'not significant (p ≥ 0.05)';
+  const mA = shMetrics(A, all), mB = shMetrics(B, all);
+
+  const order = [...SH.systems].sort((x, y) => shMetrics(y.id, all).exact - shMetrics(x.id, all).exact);
+  const lb = order.map(s => { const m = shMetrics(s.id, all), m6 = shMetrics(s.id, all.filter(i => SH.sheets[i] !== '601_196705_SF.JPG'));
+    return `<tr class="${s.id === A ? 'sel-a' : s.id === B ? 'sel-b' : ''}"><td>${esc(s.label)}</td><td>${barRow(m.exact, s.family, pct(m.exact))}</td>
+    <td class="n">${m.cer.toFixed(3)}</td><td class="n">${pct(m.empty)}</td><td class="n">${pct(m6.exact)}</td></tr>`; }).join('');
+
+  const sheets = [...new Set(SH.sheets)].sort();
+  const dual = (rows) => rows.map(r => `<div>${r.name}<br><small class="note">n=${r.n}</small></div><div class="bars">
+    <div class="bwrap"><div class="bar" style="width:${r.a * 100}%;background:var(--a)"></div><span>${pct(r.a)}</span></div>
+    <div class="bwrap"><div class="bar" style="width:${r.b * 100}%;background:var(--b)"></div><span>${pct(r.b)}</span></div></div>`).join('');
+  const grouped = defs => defs.map(([name, fn]) => { const idx = all.filter(fn); return idx.length ? {name, n: idx.length, a: idx.filter(i => ra[i]).length / idx.length, b: idx.filter(i => rb[i]).length / idx.length} : null; }).filter(Boolean);
+  const perSheet = dual(grouped(sheets.map(sh => [sh.replace('_SF.JPG', ''), i => SH.sheets[i] === sh])));
+  const byCol = dual(grouped([['Max', i => SH.rc[i][1] === 4], ['Min', i => SH.rc[i][1] === 5], ['(Max+Min)/2', i => SH.rc[i][1] === 6]]));
+  const byLen = dual(grouped([['2 digits', i => SH.truth[i].length === 2], ['3 digits', i => SH.truth[i].length === 3], ['4 digits', i => SH.truth[i].length === 4]]));
+  const byTen = dual(grouped([['value ends in 0', i => SH.truth[i].endsWith('0')], ['other values', i => !SH.truth[i].endsWith('0')]]));
+
+  const types = ['Empty output', 'Missing digits', 'Extra digits', 'Only last digit wrong', 'Substituted digits'];
+  const cnt = id => { const c = Object.fromEntries(types.map(t => [t, 0])); for (const i of all) { const t = shErr(id, i); if (t) c[t]++; } return c; };
+  const ca = cnt(A), cb = cnt(B);
+  const errRows = types.map(t => `<tr><td>${t}</td><td class="n">${ca[t]}</td><td class="n">${cb[t]}</td></tr>`).join('');
+  const conf = id => shConf(id).map(([k, n]) => { const [t, p] = k.split('→'); return `<tr><td class="mono">${esc(t)} → ${p === '' ? '∅' : esc(p)}</td><td class="n">${n}</td></tr>`; }).join('');
+
+  const matrix = `<tr><th>Sheet</th>${order.map(s => `<th class="n" title="${esc(s.label)}">${esc(s.label.replace('tess_', 'T ').replace(' | ', ' '))}</th>`).join('')}</tr>` +
+    sheets.map(sh => { const idx = all.filter(i => SH.sheets[i] === sh);
+      return `<tr><td>${esc(sh.replace('_SF.JPG', ''))}</td>${order.map(s => { const v = shMetrics(s.id, idx).exact;
+        return `<td class="n" style="background:color-mix(in srgb,var(${s.family === 'glm' ? '--b' : '--a'}) ${Math.round(v * 55)}%,transparent)">${(v * 100).toFixed(0)}</td>`; }).join('')}</tr>`; }).join('');
+
+  $('#tab-stats').innerHTML = `
+  <section class="panel"><h2>Head to head: <span class="a">A</span> vs <span class="b">B</span> on the manually transcribed sheets</h2>
+    <p class="note"><b class="a">A</b> = ${esc(sysById2(A))}<br><b class="b">B</b> = ${esc(sysById2(B))}<br>
+    ${SN.toLocaleString()} cells (max / min / mean temperature) on ${sheets.length} sheets, scored against the manual transcription. Pick the systems at the top of the page.</p>
+    <div class="tiles">
+      <div class="tile"><b class="a">${pct(mA.exact)}</b><span>A correct</span></div>
+      <div class="tile"><b class="b">${pct(mB.exact)}</b><span>B correct</span></div>
+      <div class="tile"><b>${both}</b><span>both right</span></div>
+      <div class="tile"><b class="a">${aOnly}</b><span>only A right</span></div>
+      <div class="tile"><b class="b">${bOnly}</b><span>only B right</span></div>
+      <div class="tile"><b>${none}</b><span>both wrong</span></div>
+    </div>
+    <p class="note" style="margin-top:10px">Paired test on the ${nd} cells where exactly one system is right (McNemar, normal approximation; cells within a sheet are not independent, so treat as indicative): ${sig}.
+    CER A ${mA.cer.toFixed(3)} vs B ${mB.cer.toFixed(3)}.</p></section>
+
+  <section class="panel"><h2>All systems</h2>
+    <p class="note">Correct = digits equal the manual value in tenths ("17" accepted for 17.0). CER = edit distance / manual-value characters. "bin" = binarised ROI as fed to Tesseract, "orig" = original colour ROI, "+128" = rescaled to 128 px high. Sheet 601 has uneven row pitch and is mis-grouped by the production row detection, so its column is shown separately.</p>
+    <div style="overflow-x:auto"><table><tr><th>System</th><th>Correct</th><th class="n">CER</th><th class="n">Empty</th><th class="n">Correct w/o sheet 601</th></tr>${lb}</table></div></section>
+
+  <div class="cols">
+    <section class="panel"><h2>By sheet</h2><p class="note"><span class="a">&#9632;</span> A &nbsp; <span class="b">&#9632;</span> B</p><div class="grp">${perSheet}</div></section>
+    <div>
+      <section class="panel"><h2>By column</h2><p class="note"><span class="a">&#9632;</span> A &nbsp; <span class="b">&#9632;</span> B</p><div class="grp">${byCol}</div></section>
+      <section class="panel"><h2>By value</h2><div class="grp">${byLen}${byTen}</div></section>
+    </div>
+  </div>
+
+  <section class="panel"><h2>Correct (%) per sheet and system</h2><p class="note">Same ordering as the table above; hover a header for the full system name.</p>
+    <div style="overflow-x:auto"><table>${matrix}</table></div></section>
+
+  <div class="cols">
+    <section class="panel"><h2>Error types</h2><p class="note">Number of wrong cells, by kind.</p>
+      <table><tr><th>Kind</th><th class="n a">A</th><th class="n b">B</th></tr>${errRows}</table></section>
+    <div></div>
+  </div>
+  <div class="cols">
+    <section class="panel"><h2>Most common mistakes &mdash; <span class="a">A</span></h2><p class="note">manual → reading (tenths)</p><table><tr><th>Mistake</th><th class="n">Count</th></tr>${conf(A)}</table></section>
+    <section class="panel"><h2>Most common mistakes &mdash; <span class="b">B</span></h2><p class="note">manual → reading (tenths)</p><table><tr><th>Mistake</th><th class="n">Count</th></tr>${conf(B)}</table></section>
+  </div>
+
+  <section class="panel"><h2>Caveats</h2><ul class="note">
+    <li>Only cells with a manual value in the max / min / mean columns are scored; detection and placement are held fixed, so this measures reading, not table finding.</li>
+    <li>The GLM model was not trained on crops from these ten sheets, so these are unseen-sheet results.</li>
+    <li>Cells are placed with the column-wise row grouping (row_grouping.py); the default KMeans grouping shifts rows 19&ndash;31 of sheet 601 by one, which paired crops with the wrong manual values. Crops are cut without side padding.</li>
+    <li>Experimental comparison only.</li></ul></section>`;
+}
+const sysById2 = id => SH.systems.find(s => s.id === id).label;
+
+renderCmp(true);
+renderSheets(true);
+</script>
+</body>
+</html>

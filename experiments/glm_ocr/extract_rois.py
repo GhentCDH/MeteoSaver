@@ -7,7 +7,7 @@ pre_QA_QC workbook give each ROI its (row, col). Done twice per sheet with ident
   roi_orig/ = the same boxes cut from the original colour clip
 Output: sheet_runs/<file>/rois/{bin,orig}/<id>.png and sheet_runs/<file>/rois/cells.json {id: [row, col]}.
 
-Run with .venv-easyocr/bin/python.   Usage: extract_rois.py [--only FILE ...]
+Run with .venv-easyocr/bin/python.   Usage: extract_rois.py [--only FILE ...] [--row-grouping columnwise]
 """
 from __future__ import annotations
 
@@ -41,23 +41,26 @@ class Recorder:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--row-grouping", choices=["kmeans", "columnwise"], default="kmeans", help="columnwise writes to rois_columnwise/ (see row_grouping.py)")
     args = ap.parse_args()
     cfg = configparser.ConfigParser()
     cfg.read(cs.REPO / "configuration.ini")
+    # configuration.ini's full_datadir may point at a single station (the TUI rewrites it); run_pipeline appends <station>/<file>
+    cfg["Directories"]["full_datadir"] = str(cs.REPO / "data/00_post1960_DRC_hydroclimate_datasheet_images")
     os.environ["TESSDATA_PREFIX"] = str(cs.REPO / "OCR_HTR_models")
 
     for p in sorted(MANUAL.glob("*/*_manually_entered_temperatures.xlsx")):
         station, f = p.parent.name, p.name.split("_manually")[0]
         if args.only and f not in args.only:
             continue
-        root = cs.HERE / "sheet_runs" / f / "rois"
+        root = cs.HERE / "sheet_runs" / f / ("rois" if args.row_grouping == "kmeans" else f"rois_{args.row_grouping}")
         if (root / "cells.json").exists():
             continue
         ns = types.SimpleNamespace(station=station, file=f)
         counts = {}
         for src in ("bin", "orig"):
             rec = Recorder(root / src)
-            xlsx = cs.run_pipeline(f"roi_{src}", ns, cfg, patch_ocr=rec, roi_source="binarized" if src == "bin" else "original")
+            xlsx = cs.run_pipeline(f"roi_{src}" + ("" if args.row_grouping == "kmeans" else f"_{args.row_grouping}"), ns, cfg, patch_ocr=rec, roi_source="binarized" if src == "bin" else "original", row_grouping=args.row_grouping, hoist_borders=True)
             counts[src] = rec.i
             if src == "orig":
                 ws = openpyxl.load_workbook(xlsx).active
