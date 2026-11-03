@@ -161,6 +161,8 @@ def process_station(station):
                                                   glm_model=config['Transcription'].get('glm_model', DEFAULT_GLM_MODEL),
                                                   glm_python=config['Transcription'].get('glm_python', ''),
                                                   glm_resize_height=int(config['Transcription'].get('glm_resize_height', 128)),
+                                                  ocr_side_enlarge=int(config['Transcription'].get('ocr_side_enlarge', OCR_SIDE_ENLARGE)),
+                                                  ocr_side_padding=int(config['Transcription'].get('ocr_side_padding', OCR_SIDE_PADDING)),
                                                   glm_batch_size=int(config['Transcription'].get('glm_batch_size', 64)),
                                                   glm_output_dir_station=os.path.join(glm_output_dir, station))
             
