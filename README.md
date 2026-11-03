@@ -57,6 +57,9 @@ the dashboard settings back to the configuration file when a run starts.
 Settings not shown in the dashboard must still be edited in
 [`configuration.ini`](configuration.ini).
 
+![1793700026809](assets/README/1793700026809.png)
+
+
 To use a different configuration file:
 
 ```bash
