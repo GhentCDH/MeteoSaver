@@ -1,198 +1,197 @@
-# MeteoSaver v1.1
+# MeteoSaver
 
-Here we present MeteoSaver v1.1, a machine-learning based software for the transcription of historical weather data.
+MeteoSaver transcribes handwritten historical weather data sheets into
+structured hydroclimate data. It detects tables and cells in scanned sheets,
+reads the cells with an OCR/HTR model, applies QA/QC checks, and can format
+the results for analysis or upload.
 
-## Directory structure
+## Quick start
 
-Below is the structure for this project.
+### 1. Install the environment
 
-```
-├── README.md                                               <- This includes general information on the project
-|                                                              and introduction of project structure and modules
-|
-├── OCR_HTR_models                                          <- Trained and serialized models, model predictions, or model summaries.
-|                                                         
-├── data
-│   ├── 00_post1960_DRC_hydroclimate_datasheet_images       <- Sample images of climate data sheets from the INERA
-|                                                              Yangambi archives, DRC, arranged in folders (representing station numbers)
-|   ├── 01_metadata_INERA_stations                          <- Metadata for the INERA meteorological stations
-│
-├── docs                                                    <- Flow charts and keys for MeteoSaver included in Muheki et al. 2025.
-|
-├── results                                                 <- All results obtained from exceution of MeteoSaver v1.0 on the sample ten datasheets
-|   |                                                          included in this repository as a Minimal Working Example                                                                                         
-│   ├──01_pre_QA_QC_transcribed_hydroclimate_data           <- Original automatic transcription using MeteoSaver before QA/QC checks
-|   |                                       
-│   ├── 02_post_QA_QC_transcribed_hydroclimate_data         <- Transcription after using MeteoSaver QA/QC checks
-|   |                                      
-│   ├── 03_validation_transcibed_data                       <- Validation of the transcription using MeteoSaver (in comparison to manual transcription)
-│   │
-│   ├── 04_final_refined_daily_hydroclimate_data            <- Final refined (formatted) trancribed data, in .xlsx and .tsv (SEF) ready for upload
-|   │
-│   ├── 05_transient_transcription_output                   <- Transient outputs (during processing)
-|
-│   ├── 06_manually_transcribed_hydroclimate_data           <- Manually transcribed data (For validation purposes)
-|
-|
-|                                       
-├── src                                                     <- Modules (2-6): Transcribing code/scripts for MeteoSaver v1.0
-│   ├── main.py                                             <- Main script to run all the modules 1-6 of MeteoSaver (scripts)
-|   |                                                          i.e. in order (i) configuration, (iI) image-preprocessing module, (iii) table and cell
-|   |                                                          detection model, (iv) transcription, (v) quality assessment and control,
-|   |                                                          and (vi) data formatting and upload
-│   │
-│   ├── tui.py                                              <- Dashboard to set the main configuration settings and run the modules from the terminal
-│   ├── review_page.py                                      <- Builds the review page of a sheet: crops, text as read, value after QA/QC (column by column)
-│   │
-│   ├── meteosaver_app                                      <- Scripts of the dashboard (layout, colours, logo, reading/writing of the configuration file)
-│   │
-│   ├── image_discovery.py                                  <- Script to search the image directory, and all the folders within it, for the images of the data sheets
-│   │
-│   ├── image_preprocessing_module.py                       <- Script to carry out image preprocessing of the original scans
-|   |                                                          of climate data records
-│   │
-│   ├── table_and_cell_detection_model.py                   <- Script to detect the table and cells from the already
-|   |                                                          pre-processed images
-│   │
-│   ├── transcription.py                                    <- Script to detect the text within the detected cells using
-|   |                                                          an Optical Character Recognition (OCR) or Handwritten Text
-|   |                                                          Recognition (HTR) model of your choice.
-|   │
-│   ├── quality_assessment_and_quality_control.py           <- Script to perform QA/QC checks on the original automatically transcribed data
-|   |                                       
-│   ├── validation.py                                       <- Script to generates a visual comparison of daily maximum, minimum,
-|   |                                                          and average temperatures between manually transcribed data and
-|   |                                                          QA/QC checked transcribed data for a specific station
-│   └── data_formatting_and_upload.py                       <- Script to select the confirmed data (from the QA/QC) and convert it both an excel file 
-|                                                              and to the Station Exchange Format, as well plot timeseries per station
-|   
-│
-├── Dockerfile                                              <- Docker install routine for a virtual environment
-|
-├──LICENSE                                                  <- License
-|
-├── configuration.ini                                       <- Module 1: Configuration. User-defined settings to ensure smooth running of MeteoSaver
-|
-├── pyproject.toml                                          <- The requirements for reproducing the analysis environment with uv
-|
-├── uv.lock                                                 <- The exact versions of all packages in the analysis environment. Generated with `uv lock`
-|
-├── job_script.sh                                           <- Job script for HPC infrastructure users to run the software
-|
-└── setup.py                                                <- Make this project pip installable with `pip install -e` 
-
-```
-
-## Setup
-
-The Python environment is managed with [uv](https://docs.astral.sh/uv/) ([see here for uv install instructions](https://docs.astral.sh/uv/getting-started/installation/)). An isolated Docker environment is provided as well.
-
-### uv
-
-To create an environment which is consistent, run the following in the main project directory. This installs Python 3.12 and all packages, in the exact versions listed in `uv.lock`, into the `.venv` folder.
+MeteoSaver is tested with Python 3.12 and uses [uv](https://docs.astral.sh/uv/)
+to create and manage its environment. Install uv first, then run this from
+the repository root:
 
 ```bash
 uv sync
 ```
 
-Run the software in this environment using:
+This creates `.venv` and installs the locked dependencies from `uv.lock`.
+
+### 2. Configure an input run
+
+Open [`configuration.ini`](configuration.ini) and update the settings for
+your data. At minimum, check:
+
+- `[General]`: use `local` for sequential processing on a computer, or
+  `hpc` for multiprocessing on a cluster.
+- `[Directories]`: set `full_datadir` to the directory containing the sheet
+  images and set the input/output and metadata paths. Image files can be
+  nested in station folders; supported extensions include `.jpg`, `.jpeg`,
+  `.png`, `.tif`, `.tiff`, and `.bmp`.
+- `[TableAndCellDetection]`: adjust clipping, table dimensions, cell
+  dimensions, and the expected row and column counts for your sheet layout.
+- `[Transcription]`: select the OCR/HTR model and set its model-specific
+  options.
+- `[QAQC]` and `[DataFormatting]`: adjust the columns, thresholds, sheet
+  layout, and date settings for your data.
+
+Paths are interpreted from the directory in which the command is run, so run
+MeteoSaver from the repository root or use absolute paths. The checked-in
+configuration is an example for the sample data in `data/`; its
+`full_datadir` is machine-specific and should be changed on another
+computer.
+
+### 3. Start the dashboard
+
+The terminal dashboard is the easiest way to run MeteoSaver:
 
 ```bash
-uv run python src/main.py
+uv run meteosaver
 ```
 
-To add or update a package, use `uv add <package>` or `uv lock --upgrade-package <package>`. This updates both `pyproject.toml` and `uv.lock`.
+The dashboard lets you review the most important settings, choose the stages
+to run, start the pipeline, and follow its progress and log output. It writes
+the dashboard settings back to the configuration file when a run starts.
+Settings not shown in the dashboard must still be edited in
+[`configuration.ini`](configuration.ini).
 
-> [!NOTE]
-> Tesseract-OCR itself is not a Python package and has to be installed separately if you select it as OCR/HTR model (see the [configuration module](configuration.ini)).
-> GLM-OCR is installed with the environment (torch and transformers). A GPU is strongly recommended for it; on Linux, uv installs the CUDA version of torch.
-> The fine-tuned model, [GhentCDH/GLM-OCR-MeteoSaver](https://huggingface.co/GhentCDH/GLM-OCR-MeteoSaver) (`glm_model` in the configuration file), is downloaded from Hugging Face on first use (about 2.2 GB) and then read from the Hugging Face cache.
+To use a different configuration file:
 
-### Docker
-
-> [!WARNING]
-> A Docker-based setup is recommended for users who want a more isolated and reproducible execution environment. Local Conda or virtual-environment installations are also supported, but containerization may reduce dependency and system-configuration issues across platforms.
-
-The Docker setup has not been moved to uv yet: it builds from the former `environment.yml` and does not include GLM-OCR.
-
-The dockerfile included provides a Conda environment ([see here for docker install instructions](https://docs.docker.com/engine/install/)).
-You can build this docker image using the below command. This will download all required
-python components and packages, while safeguarding (sandboxing) your system
-from `pip` based [security issues](https://www.bleepingcomputer.com/news/security/pypi-suspends-new-user-registration-to-block-malware-campaign/). Once build locally no further downloads 
-will be required.
-
-```
-# In the main project directory run
-docker build -f Dockerfile -t meteosaver_env .
+```bash
+uv run meteosaver --config /path/to/my-configuration.ini
 ```
 
-To spin up a docker image using:
-
-```
-docker run -it -v /local_data:/docker_data_dir meteosaver_env
-```
-
-## Modules
-The figure below represents the modules in MeteoSaver v1.0
-
-  ![Schematic representation of the modules in MeteoSaver v1.0](https://github.com/VUB-HYDR/MeteoSaver/blob/6a5238af498088d58173940e04fe8e5cf66567be/docs/Schematic%20representation%20of%20the%20modules%20in%20MeteoSaver%20v1.0.png)
-
-
-## How to run MeteoSaver v1.0 
-After setting up the python environment using uv (see [Setup](#setup)) or Docker setup available on this repository, input the following settings in the [configuration module](https://github.com/VUB-HYDR/MeteoSaver/blob/b8138fa5a23f4ce40603cae8defd82d10734fdbd/configuration.ini) specific to your case study (sheets) before running (see table below):
-1. General: Here, you specify the environment in which the scripts will run, i.e. ```local``` (Sequential processing on a personal computer) or ```hpc``` (Parallel processing using multiple processors, suitable for High Performance Computing (HPC) environments). This is set to ```local``` by default
-2. Directories. Here, you specify the directories for the following: (i) all historical weather data sheet images in folders per station, (ii) pre-QA/QC transcribed data, (iii) post-QA/QC transcribed data, (iv) the final refined daily hydroclimate data (after all quality checks), (v) transient transcription output during processing, (vi) manually transcribed data (used for validation), (vii) alidation results comparing manually transcribed and the MeteoSaver transcribed data, and (viii) all the stations metadata.
-3. Table and Cell Detection: User specifications for table and cell detection.
-4. Transcription: User specifications related to the Optical Character Recognition/Handwritten Text Recognition (OCR/HTR).
-5. QA/QC: Here, you specify parts of the transcribed table on which to perform QA/QC checks.
-6. Data Formatting: Here, you specify the location of the date information in the tables, used for formatting the transcribed data to time series in .xlsx and .tsv (Station Exchange Format).
-
-After inputting the configuration settings specific to your case study (see Table below), you can then run the [main.py](https://github.com/VUB-HYDR/MeteoSaver/blob/7aeab0f526b44056c062407df7cfe467e20a67d8/src/main.py) script if using ```local```, or [job_script](https://github.com/VUB-HYDR/MeteoSaver/blob/aefb8d8068762c5a7715be24dfee835363673ae7/job_script.sh) in case of ```hpc``` architecture, which runs all the modules 1-6 of MeteoSaver i.e. in order (i) configuration, (iI) image-preprocessing module, (iii) table and cell detection model, (iv) transcription, (v) quality assessment and control, and (vi) data formatting and upload, and return results in the specified directories. 
-
-### Dashboard
-Instead of editing the configuration file by hand and running [main.py](src/main.py), you can use the dashboard in the terminal:
+The equivalent command, useful when the editable script entry point is not
+available, is:
 
 ```bash
 uv run python src/tui.py
 ```
 
-The dashboard shows the main settings of the [configuration module](configuration.ini) (image and results directories, the basic settings of the table detection (clipping, table and cell sizes, binarization), OCR/HTR model, and the temperature thresholds of the QA/QC), lets you select which modules to run (transcription, clean-up, quality control, data formatting, validation) and shows their progress and the log of the run. The settings are saved to the configuration file when a run starts; all other settings are still edited in the configuration file itself. A module that is switched off uses the files of an earlier run that are in the results directories. Use `--config` to work with another configuration file.
+## Run without the dashboard
 
-The selection of modules is also available without the dashboard, e.g. `uv run python src/main.py --stages qaqc formatting validation`.
+The pipeline can also be started directly:
 
-#### Clean-up and quality control
-The QA/QC module has two switches. **Clean-up** formats the transcribed text (digits to decimals, trimming of values that are too long) and checks single values (a daily temperature in the 80s read as the 30s, values outside the minimum and maximum temperature, which are marked red). It recalculates nothing and confirms nothing. **Quality control** also does that, and adds the cross-checks that recalculate values and confirm them (marked green): multi-day totals and averages, the daily mean and amplitude, and the vapour pressure, humidity and wet-bulb checks. Quality control includes the clean-up, so with both switched on the second pass replaces the output of the first; `--stages cleanup` and `--stages qaqc` select them without the dashboard.
+```bash
+uv run python src/main.py
+```
 
-Data formatting and validation use the values that quality control confirmed. For a sheet that only had the clean-up (the workbook records this), they use every number as it is.
+By default this runs transcription, clean-up, quality control, data
+formatting, and validation. The review-page stage is opt-in. Select a subset
+of stages with `--stages`:
 
-#### Review page
-The dashboard has one more switch, **REVIEW PAGE (BROWSER)**, off by default. When it is on, a page is written for each sheet (to `09_review_pages/<station>/<image file>/index.html` next to the other results, or to `review_dir` of the configuration file) and the first one opens in the browser as soon as it is ready. The page shows the table column by column, with the crop of each cell that GLM-OCR read, the text as it was read, the value after QA/QC and, for the temperature columns, the manual transcription if there is one in `manually_transcribed_data_dir`. Green and red mark agreement with the manual value; amber marks a reading that QA/QC changed. Use the left and right arrow keys to change column, and "differences only" to hide the cells that are fine.
+```bash
+uv run python src/main.py --stages transcription cleanup qaqc formatting
+uv run python src/main.py --stages qaqc formatting validation
+```
 
-The page needs the GLM-OCR model (it shows the text as GLM-OCR read it). Without the dashboard: `uv run python src/main.py --stages transcription qaqc review`; the module is [review_page.py](src/review_page.py).
+Available stages are:
 
-### Minimal Working Example (MWE)
-You can run the entire script in this repository as a Minimal Working Example (MWE) without modifying any configuration settings. Simply set up the Python environment on your personal computer, i.e. ```local```, and execute the script using [main.py](https://github.com/VUB-HYDR/MeteoSaver/blob/7aeab0f526b44056c062407df7cfe467e20a67d8/src/main.py) or run the MWE provided on this repository ([here](https://github.com/VUB-HYDR/MeteoSaver/tree/81c420360c39258ea67087764dee15d8ceb634cb/manual_and_minimal_working_example)) in Jupyter Notebooks.
+| Stage             | What it does                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `transcription` | Preprocesses each sheet, detects tables/cells, and transcribes the cells.                                                              |
+| `cleanup`       | Normalizes transcribed values and performs single-value checks; it does not recalculate values.                                        |
+| `qaqc`          | Runs clean-up plus cross-checks that recalculate and confirm values, such as totals, averages, and temperature relationships.          |
+| `formatting`    | Uses the checked values to create final time-series outputs, including Excel and Station Exchange Format (SEF) files where configured. |
+| `validation`    | Compares MeteoSaver output with manually transcribed data when it is available.                                                        |
+| `review`        | Writes a browser review page for each sheet; it is not selected by default and requires GLM-OCR.                                       |
 
+Stages that are omitted use files already present in the configured result
+directories. Run `qaqc` rather than `cleanup` when you want the recalculating
+cross-checks; `qaqc` includes clean-up.
 
-### Configuration user-settings
-The table below describes all the configuration user-settings.
-![Configuration_user_settings](https://github.com/VUB-HYDR/MeteoSaver/blob/80195a7a08ed4c0435c55c0a3e4cba907d9fe0e9/docs/Configuration%20user%20settings.png)
+### Using another configuration with the pipeline
 
+`src/main.py` reads `configuration.ini` by default. To use another file,
+set `METEOSAVER_CONFIG`:
 
+```bash
+METEOSAVER_CONFIG=/path/to/my-configuration.ini \
+  uv run python src/main.py --stages transcription qaqc formatting
+```
 
+The dashboard’s `--config` option and the pipeline’s `METEOSAVER_CONFIG`
+environment variable are separate mechanisms.
 
-## Authors
-Derrick Muheki
+## OCR/HTR requirements
 
-Koen Hufkens
+The default model is GLM-OCR:
 
-Bas Vercruysse
+```ini
+[Transcription]
+ocr_model = GLM-OCR
+glm_model = GhentCDH/GLM-OCR-MeteoSaver
+```
 
-Krishna Kumar Thirukokaranam Chandrasekar
+The model is downloaded from Hugging Face on first use (approximately 2.2 GB)
+and cached locally. A GPU is strongly recommended. Reduce `glm_batch_size` if
+the model runs out of GPU memory. On an HPC system, `glm_python` can point to
+a separate Python environment containing the GLM-OCR dependencies.
 
-Wim Thiery
+Tesseract is an alternative, but the Tesseract executable is not a Python
+dependency. Install it separately, copy the required trained data file from
+[`OCR_HTR_models/`](OCR_HTR_models/) into the system `tessdata` directory,
+and set `tesseract_path` and `system_tessdata_dir` in the configuration.
 
+## Outputs
 
-## Acknowledgements
+The configured output directories are created and populated as stages run.
+The sample configuration uses these locations:
 
-This template was inspired by the [python_proj_template](https://github.com/pepaaran/python_proj_template).
+- `results_new/01_pre_QA_QC_transcribed_hydroclimate_data/`: raw
+  transcription output.
+- `results_new/02_post_QA_QC_transcribed_hydroclimate_data/`: output after
+  QA/QC.
+- `results_new/03_validation_transcibed_data/`: validation comparisons.
+- `results_new/04_final_refined_daily_hydroclimate_data/`: formatted final
+  data.
+- `results_new/05_transient_transcription_output/`: intermediate processing
+  files.
+- `results_new/08_GLM_OCR_output/`: text read by GLM-OCR and detected cells.
+- `results_new/09_review_pages/`: browser review pages when `review` is run.
+
+The dashboard opens the first review page in a browser when that stage is
+enabled. Without the dashboard, open the generated `index.html` files
+manually.
+
+## Sample data and examples
+
+The repository includes sample sheet images under
+[`data/00_post1960_DRC_hydroclimate_datasheet_images/`](data/00_post1960_DRC_hydroclimate_datasheet_images/)
+and notebooks and a minimal working example under
+[`manual_and_minimal_working_example/`](manual_and_minimal_working_example/).
+The example configuration is designed for the included sample data, but
+machine-specific paths still need to be updated.
+
+## Project structure
+
+- [`src/main.py`](src/main.py): command-line pipeline.
+- [`src/tui.py`](src/tui.py): terminal dashboard entry point.
+- [`src/meteosaver_app/`](src/meteosaver_app/): dashboard implementation and
+  pipeline runner.
+- [`src/image_preprocessing_module.py`](src/image_preprocessing_module.py):
+  image preprocessing.
+- [`src/table_and_cell_detection_model.py`](src/table_and_cell_detection_model.py):
+  table and cell detection.
+- [`src/transcription.py`](src/transcription.py): OCR/HTR transcription.
+- [`src/quality_assessment_and_quality_control.py`](src/quality_assessment_and_quality_control.py):
+  clean-up and QA/QC.
+- [`src/data_formatting_and_upload.py`](src/data_formatting_and_upload.py):
+  final formatting and export.
+- [`src/validation.py`](src/validation.py): comparison with manual
+  transcriptions.
+- [`docs/`](docs/): workflow diagrams and data-formatting references.
+
+## License and authors
+
+MeteoSaver is released under the license in [`LICENSE`](LICENSE).
+
+Authors:
+
+- Derrick Muheki
+- Koen Hufkens
+- Bas Vercruysse
+- Krishna Kumar Thirukokaranam Chandrasekar
+- Wim Thiery
